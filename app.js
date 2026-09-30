@@ -77,6 +77,11 @@ function parseTmwRef(value) {
   if (idOnly) {
     return { type: idOnly[1].toLowerCase(), id: idOnly[2], internal: true };
   }
+  const objectNameLref = raw.match(/object_name_lref[:/=](\d+)/i);
+  if (objectNameLref) {
+    return { type: "thesaurus", id: objectNameLref[1], internal: true };
+  }
+
   if (/^\d+$/.test(raw)) {
     return { type: "object", id: raw, internal: true, guess: true };
   }
@@ -187,11 +192,55 @@ function parseSkos(xmlText, fallbackId) {
   return { label: pref, description: "", refs };
 }
 
+const MAX_THESAURUS_OBJECTS = 40;
+
+function collectObjectNameRefs(data) {
+  const records = asList(data?.recordList?.record);
+  const total = Number(data?.status?.count?.num) || records.length;
+  const refs = [];
+  for (const record of records.slice(0, MAX_THESAURUS_OBJECTS)) {
+    const objectId = record?.id;
+    if (!objectId) continue;
+    refs.push({
+      type: "object",
+      id: String(objectId),
+      internal: true,
+      label: extractLabel(record, `object ${objectId}`),
+    });
+  }
+  return { refs, total };
+}
+
+async function fetchThesaurusObjects(id) {
+  const response = await fetch(`${API_BASE}/object/object_name_lref:${id}/json`);
+  if (!response.ok) return { refs: [], total: 0 };
+  return collectObjectNameRefs(await response.json());
+}
+
+function thesaurusObjectSummary(shown, total) {
+  if (!shown) return "";
+  if (total > shown) {
+    return `${shown} Objekte mit diesem Begriff (von ${total}).`;
+  }
+  return `${shown} Objekt${shown === 1 ? "" : "e"} mit diesem Begriff.`;
+}
+
 async function fetchRecord(type, id) {
   if (type === "thesaurus") {
     const response = await fetch(`${API_BASE}/thesaurus/${id}/skos`);
     if (!response.ok) throw new Error(`Thesaurus ${id} nicht gefunden`);
-    return parseSkos(await response.text(), id);
+    const parsed = parseSkos(await response.text(), id);
+    let objects = { refs: [], total: 0 };
+    try {
+      objects = await fetchThesaurusObjects(id);
+    } catch {
+      objects = { refs: [], total: 0 };
+    }
+    return {
+      ...parsed,
+      description: parsed.description || thesaurusObjectSummary(objects.refs.length, objects.total),
+      refs: [...parsed.refs, ...objects.refs],
+    };
   }
 
   const response = await fetch(`${API_BASE}/${type}/${id}/json`);
