@@ -343,30 +343,27 @@ async function flyTo(node) {
 
   graph.selected = node.key;
   updatePanel(node);
-  setStatus(`Flug zu ${node.label}…`);
   const fromNode = graph.nodes.get(graph.origin);
-  const loading = expandNode(node);
 
   if (fromNode && fromNode.key !== node.key) {
+    setStatus(`Flug zu ${node.label}…`);
     await runFlight(fromNode, node);
   }
 
   graph.origin = node.key;
   recomputeDepths(node.key);
+  const fromDepths = snapshotDepths(true);
   try {
-    await loading;
+    await expandNode(node);
+    updatePanel(node);
     recomputeDepths(node.key);
   } catch (error) {
     setStatus(error.message);
   }
-
-  const fromDepths = snapshotDepths(true);
   const toDepths = snapshotDepths(false);
   await runLayoutSettle(fromDepths, toDepths);
   for (const star of graph.nodes.values()) star.displayDepth = star.depth;
-  if (!statusEl.textContent.startsWith(node.label)) {
-    setStatus(`${node.label} · ${node.neighbors.length} Verbindungen`);
-  }
+  setStatus(`${node.label} · ${node.neighbors.length} Verbindungen`);
 }
 
 function runFlight(fromNode, toNode) {
@@ -377,13 +374,15 @@ function runFlight(fromNode, toNode) {
       fromKey: fromNode.key,
       toKey: toNode.key,
       start: performance.now(),
-      duration: 1600,
+      duration: 2200,
+      frames: 0,
+      minFrames: 96,
       fromYaw: yaw,
       fromPitch: pitch,
-      toYaw: shortestAngle(yaw, look.yaw),
-      toPitch: look.pitch,
+      toYaw: shortestAngle(yaw, Number.isFinite(look.yaw) ? look.yaw : yaw),
+      toPitch: Number.isFinite(look.pitch) ? look.pitch : pitch,
       fromDist: camDist,
-      toDist: 480,
+      toDist: 430,
       done: resolve,
     };
   });
@@ -396,7 +395,9 @@ function runLayoutSettle(fromDepths, toDepths) {
       fromKey: graph.origin,
       toKey: graph.origin,
       start: performance.now(),
-      duration: 700,
+      duration: 800,
+      frames: 0,
+      minFrames: 36,
       fromDepths,
       toDepths,
       fromYaw: yaw,
@@ -485,11 +486,17 @@ function snapshotDepths(useDisplay = true) {
 
 function updateFlight(now) {
   if (!flight) return;
-  const t = Math.min(1, (now - flight.start) / flight.duration);
+  flight.frames = (flight.frames || 0) + 1;
+  const byTime = (now - flight.start) / flight.duration;
+  const byFrames = flight.frames / (flight.minFrames || 1);
+  const t = Math.min(1, Math.min(byTime, byFrames));
   const e = easeInOutCubic(t);
   yaw = lerp(flight.fromYaw, flight.toYaw, e);
   pitch = lerp(flight.fromPitch, flight.toPitch, e);
   camDist = lerp(flight.fromDist, flight.toDist, e);
+  if (flight.mode === "travel") {
+    setStatus(`Flug… ${Math.round(t * 100)}%`);
+  }
   if (flight.mode === "settle" && flight.fromDepths && flight.toDepths) {
     for (const node of graph.nodes.values()) {
       const from = flight.fromDepths.has(node.key) ? flight.fromDepths.get(node.key) : node.depth + 0.5;
