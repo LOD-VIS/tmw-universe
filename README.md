@@ -17,6 +17,9 @@ Es gibt die Datenquellen für
 - Thesaurusbegriffe: https://data.tmw.at/thesaurus/{ID}/skos
 - Objekte: https://data.tmw.at/object/{ID}/xml
 - Akteure: https://data.tmw.at/person/{ID}/xml
+- Objekte zu einem Thesaurusbegriff: https://data.tmw.at/object/object_name_lref:{ID}/xml
+
+Von einem Thesaurusstern führen Linien zu verwandten Begriffen (SKOS) und zu Objekten, die diesen Begriff als Objektbezeichnung (`object_name_lref`) tragen.
 
 Die Farbe der Sterne entspricht der Type des Knotens. Verlinkungen, die aus dem Datenpool des Technischen Museums herausführen, führen in ein weiteres Universum und werden derzeit nicht verfolgt.
 
@@ -40,6 +43,8 @@ Search examples:
 - `object/164392`
 - `person/250326` — Stirling Moss
 - `https://data.tmw.at/thesaurus/12992`
+- `https://data.tmw.at/object/object_name_lref:30832/xml` — Thesaurus 30832 (Albumblatt) und verknüpfte Objekte
+- `thesaurus/30832`
 
 ## Related
 
