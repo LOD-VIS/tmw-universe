@@ -44,13 +44,6 @@ function lerp(a, b, t) {
   return a + (b - a) * t;
 }
 
-function shortestAngle(from, to) {
-  let delta = (to - from) % (Math.PI * 2);
-  if (delta > Math.PI) delta -= Math.PI * 2;
-  if (delta < -Math.PI) delta += Math.PI * 2;
-  return from + delta;
-}
-
 function nodeDepth(node) {
   return node.displayDepth ?? node.depth;
 }
@@ -392,7 +385,6 @@ async function flyTo(node) {
 }
 
 function runFlight(fromNode, toNode) {
-  const look = lookAnglesFor(toNode);
   return new Promise((resolve) => {
     flight = {
       mode: "travel",
@@ -404,10 +396,11 @@ function runFlight(fromNode, toNode) {
       minFrames: 96,
       fromYaw: yaw,
       fromPitch: pitch,
-      toYaw: shortestAngle(yaw, Number.isFinite(look.yaw) ? look.yaw : yaw),
-      toPitch: Number.isFinite(look.pitch) ? look.pitch : pitch,
+      toYaw: yaw,
+      toPitch: pitch,
       fromDist: camDist,
       toDist: 430,
+      e: 0,
       done: resolve,
     };
   });
@@ -431,6 +424,7 @@ function runLayoutSettle(fromDepths, toDepths) {
       toPitch: pitch,
       fromDist: camDist,
       toDist: 720,
+      e: 0,
       done: resolve,
     };
   });
@@ -482,17 +476,6 @@ function worldPosition(node, depth = nodeDepth(node)) {
   };
 }
 
-function lookAnglesFor(node, depth = nodeDepth(node)) {
-  const p = worldPosition(node, depth);
-  const targetYaw = Math.atan2(p.x, p.z);
-  const zz = p.x * Math.sin(targetYaw) + p.z * Math.cos(targetYaw);
-  const targetPitch = Math.atan2(p.y, zz);
-  return {
-    yaw: targetYaw,
-    pitch: Math.max(-1.1, Math.min(1.1, targetPitch)),
-  };
-}
-
 function starSize(node, scale) {
   const links = linkCount(node);
   const byLinks = 2.8 + Math.sqrt(links) * 2.35;
@@ -516,6 +499,7 @@ function updateFlight(now) {
   const byFrames = flight.frames / (flight.minFrames || 1);
   const t = Math.min(1, Math.min(byTime, byFrames));
   const e = easeInOutCubic(t);
+  flight.e = e;
   yaw = lerp(flight.fromYaw, flight.toYaw, e);
   pitch = lerp(flight.fromPitch, flight.toPitch, e);
   camDist = lerp(flight.fromDist, flight.toDist, e);
@@ -528,26 +512,53 @@ function updateFlight(now) {
   }
   if (t >= 1) {
     const done = flight.done;
+    if (flight.mode === "travel" && flight.toKey) {
+      graph.origin = flight.toKey;
+    }
     if (flight.mode === "settle") {
       for (const node of graph.nodes.values()) node.displayDepth = node.depth;
     }
     camDist = flight.toDist;
+    flight.e = 1;
     flight = null;
     if (done) done();
   }
 }
 
+function cameraFocus() {
+  if (flight?.mode === "travel") {
+    const from = graph.nodes.get(flight.fromKey);
+    const to = graph.nodes.get(flight.toKey);
+    if (from && to) {
+      const e = flight.e ?? 0;
+      const a = worldPosition(from);
+      const b = worldPosition(to);
+      return {
+        x: lerp(a.x, b.x, e),
+        y: lerp(a.y, b.y, e),
+        z: lerp(a.z, b.z, e),
+      };
+    }
+  }
+  const origin = graph.nodes.get(graph.origin);
+  return origin ? worldPosition(origin) : { x: 0, y: 0, z: 0 };
+}
+
 function project(node) {
   const p = worldPosition(node);
+  const f = cameraFocus();
+  const rx = p.x - f.x;
+  const ry = p.y - f.y;
+  const rz = p.z - f.z;
   const cy = Math.cos(yaw);
   const sy = Math.sin(yaw);
   const cp = Math.cos(pitch);
   const sp = Math.sin(pitch);
 
-  const xz = p.x * cy - p.z * sy;
-  const zz = p.x * sy + p.z * cy;
-  const yz = p.y * cp - zz * sp;
-  const depth = p.y * sp + zz * cp + camDist / zoom;
+  const xz = rx * cy - rz * sy;
+  const zz = rx * sy + rz * cy;
+  const yz = ry * cp - zz * sp;
+  const depth = ry * sp + zz * cp + camDist / zoom;
   const scale = 520 / Math.max(80, depth);
   return {
     x: width / 2 + xz * scale * devicePixelRatio,
@@ -569,12 +580,11 @@ function drawBackground() {
   }
 }
 
-function drawFlight(projected, now) {
+function drawFlight(projected) {
   if (!flight || flight.mode !== "travel") return;
   const from = projected.get(flight.fromKey);
   const to = projected.get(flight.toKey);
   if (!from || !to) return;
-  const t = easeInOutCubic(Math.min(1, (now - flight.start) / flight.duration));
   ctx.strokeStyle = "rgba(232, 238, 252, 0.55)";
   ctx.lineWidth = 2.2 * devicePixelRatio;
   ctx.beginPath();
@@ -582,8 +592,9 @@ function drawFlight(projected, now) {
   ctx.lineTo(to.x, to.y);
   ctx.stroke();
 
-  const px = lerp(from.x, to.x, t);
-  const py = lerp(from.y, to.y, t);
+  // Camera tracks the ship, so the craft stays on the screen center.
+  const px = width / 2;
+  const py = height / 2;
   const glow = 11 * devicePixelRatio;
   ctx.beginPath();
   ctx.fillStyle = "#fff8dc";
@@ -593,10 +604,10 @@ function drawFlight(projected, now) {
   ctx.fill();
   ctx.shadowBlur = 0;
   for (let i = 1; i <= 6; i += 1) {
-    const trailT = Math.max(0, t - i * 0.045);
+    const along = i * 0.08;
     ctx.beginPath();
     ctx.fillStyle = `rgba(255, 248, 220, ${0.28 - i * 0.035})`;
-    ctx.arc(lerp(from.x, to.x, trailT), lerp(from.y, to.y, trailT), glow * (1 - i * 0.1), 0, Math.PI * 2);
+    ctx.arc(lerp(px, from.x, along), lerp(py, from.y, along), glow * (1 - i * 0.1), 0, Math.PI * 2);
     ctx.fill();
   }
 }
@@ -628,7 +639,7 @@ function draw() {
     }
   }
 
-  drawFlight(projected, now);
+  drawFlight(projected);
 
   const ordered = [...graph.nodes.values()].sort(
     (a, b) => projected.get(b.key).depth - projected.get(a.key).depth,
