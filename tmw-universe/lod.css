@@ -1,0 +1,46 @@
+body {
+	font-family: sans-serif;
+}
+
+table.list {
+	border: 1px solid grey;
+	border-collapse: separate;
+	border-spacing: 0px;
+}
+
+td {
+	border: 1px solid grey;
+	padding: 1px;
+	font-size: 0.8em;
+}
+
+strong {
+	font-weight: bold;
+}
+
+.title {
+	font-weight: bold;
+	font-size: 1.2em;
+}
+
+.links {
+	font-weight: bold;
+	font-size: 1em;
+}
+
+.summary {
+	font-size: 0.8em;
+	font-style: italic;
+}
+
+.link {
+	font-size: 0.8em;
+}
+
+.block {
+	border: 1px solid black;
+	background-color: #ffe;
+	margin-bottom: 10px;
+	padding: 5px;
+}
+
