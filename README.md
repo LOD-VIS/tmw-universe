@@ -2,7 +2,7 @@
 
 Relocated from [nibble-arts/lod](https://github.com/nibble-arts/lod).
 
-PHP tool for searching and linking records across open data sources:
+The project lives in the `tmw-universe/` folder. It is a PHP tool for searching and linking records across open data sources:
 
 - German Wikipedia
 - Watch-Wiki
@@ -12,12 +12,12 @@ PHP tool for searching and linking records across open data sources:
 
 ## Layout
 
-- `index.php` — search form and source queries
-- `lod.css` — page styles
-- `plugin/dnb/` — DNB SRU / GND client and XSLT views
-- `plugin/geonames/` — GeoNames search client
-- `plugin/mediawiki/` — MediaWiki API client
-- `easyrdf-0.8.0/` — bundled EasyRdf 0.8.0 library
+- `tmw-universe/index.php` — search form and source queries
+- `tmw-universe/lod.css` — page styles
+- `tmw-universe/plugin/dnb/` — DNB SRU / GND client and XSLT views
+- `tmw-universe/plugin/geonames/` — GeoNames search client
+- `tmw-universe/plugin/mediawiki/` — MediaWiki API client
+- `tmw-universe/easyrdf-0.8.0/` — bundled EasyRdf 0.8.0 library
 
 The original repository also has a `dnbUpdate` branch that removes EasyRdf and comments out the DNB queries. That work-in-progress branch was not merged here.
 
@@ -26,7 +26,7 @@ The original repository also has a `dnbUpdate` branch that removes EasyRdf and c
 Requires PHP with `allow_url_fopen` (or equivalent HTTP access) and the XSL extension:
 
 ```bash
-php -S localhost:8000
+php -S localhost:8000 -t tmw-universe
 ```
 
 Then open `http://localhost:8000/`.
