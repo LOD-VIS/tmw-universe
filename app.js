@@ -494,9 +494,6 @@ function updateFlight(now) {
   yaw = lerp(flight.fromYaw, flight.toYaw, e);
   pitch = lerp(flight.fromPitch, flight.toPitch, e);
   camDist = lerp(flight.fromDist, flight.toDist, e);
-  if (flight.mode === "travel") {
-    setStatus(`Flug… ${Math.round(t * 100)}%`);
-  }
   if (flight.mode === "settle" && flight.fromDepths && flight.toDepths) {
     for (const node of graph.nodes.values()) {
       const from = flight.fromDepths.has(node.key) ? flight.fromDepths.get(node.key) : node.depth + 0.5;
