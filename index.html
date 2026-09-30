@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TMW Universe</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <canvas id="space" aria-label="Universum der TMW-Daten"></canvas>
+  <header class="hud">
+    <div class="brand">
+      <h1>TMW Universe</h1>
+      <p>Technisches Museum Wien · Linked Open Data</p>
+    </div>
+    <form id="search-form" autocomplete="off">
+      <label class="sr-only" for="search">Stern anspringen</label>
+      <input id="search" name="q" type="search" placeholder="Objekt, Person, Thesaurus oder ID…" value="164392">
+      <button type="submit">Anspringen</button>
+    </form>
+    <ul class="legend" aria-label="Sternfarben">
+      <li><span class="swatch object"></span>Objekt</li>
+      <li><span class="swatch person"></span>Akteur</li>
+      <li><span class="swatch thesaurus"></span>Thesaurus</li>
+      <li><span class="swatch external"></span>Anderes Universum</li>
+    </ul>
+  </header>
+  <aside id="panel" class="panel" hidden>
+    <p class="panel-type" id="panel-type"></p>
+    <h2 id="panel-title"></h2>
+    <p class="panel-id" id="panel-id"></p>
+    <p id="panel-description"></p>
+    <p class="panel-hint">Klick auf einen Stern oder eine Linie, um weiterzufliegen. Links außerhalb von data.tmw.at bleiben unberührt.</p>
+  </aside>
+  <p id="status" class="status" role="status"></p>
+  <script src="app.js"></script>
+</body>
+</html>
