@@ -32,6 +32,31 @@ let lastY = 0;
 let pointerStartX = 0;
 let pointerStartY = 0;
 let hoverKey = null;
+let flight = null;
+let camDist = 720;
+
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2;
+}
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function shortestAngle(from, to) {
+  let delta = (to - from) % (Math.PI * 2);
+  if (delta > Math.PI) delta -= Math.PI * 2;
+  if (delta < -Math.PI) delta += Math.PI * 2;
+  return from + delta;
+}
+
+function nodeDepth(node) {
+  return node.displayDepth ?? node.depth;
+}
+
+function linkCount(node) {
+  return node.neighbors.length;
+}
 
 function recomputeDepths(originKey) {
   for (const node of graph.nodes.values()) {
@@ -126,6 +151,7 @@ function ensureNode(ref, label, depth) {
     neighbors: [],
     theta: hashAngle(key, 7),
     phi: 0.35 + (hashAngle(key, 19) % 1000) / 1000 * 1.9,
+    displayDepth: depth,
   };
   graph.nodes.set(key, node);
   return node;
@@ -280,6 +306,9 @@ async function jumpTo(query) {
     try {
       setStatus(`Lade ${attempt.type} ${attempt.id}…`);
       const payload = await fetchRecord(attempt.type, attempt.id);
+      if (flight?.done) flight.done();
+      flight = null;
+      camDist = 720;
       graph.nodes.clear();
       const origin = ensureNode(attempt, payload.label, 0);
       origin.loaded = true;
@@ -292,6 +321,7 @@ async function jumpTo(query) {
         linkNodes(origin, neighbor);
       }
       recomputeDepths(origin.key);
+      for (const node of graph.nodes.values()) node.displayDepth = node.depth;
       updatePanel(origin);
       setStatus(`${origin.label} · ${payload.refs.length} Verbindungen`);
       return;
@@ -300,6 +330,85 @@ async function jumpTo(query) {
     }
   }
   setStatus(lastError?.message || "Datensatz nicht gefunden.");
+}
+
+async function flyTo(node) {
+  if (!node.internal) {
+    graph.selected = node.key;
+    updatePanel(node);
+    setStatus("Anderes Universum — wird nicht verfolgt.");
+    return;
+  }
+  if (flight) return;
+
+  graph.selected = node.key;
+  updatePanel(node);
+  const fromNode = graph.nodes.get(graph.origin);
+
+  if (fromNode && fromNode.key !== node.key) {
+    setStatus(`Flug zu ${node.label}…`);
+    await runFlight(fromNode, node);
+  }
+
+  graph.origin = node.key;
+  recomputeDepths(node.key);
+  const fromDepths = snapshotDepths(true);
+  try {
+    await expandNode(node);
+    updatePanel(node);
+    recomputeDepths(node.key);
+  } catch (error) {
+    setStatus(error.message);
+  }
+  const toDepths = snapshotDepths(false);
+  await runLayoutSettle(fromDepths, toDepths);
+  for (const star of graph.nodes.values()) star.displayDepth = star.depth;
+  setStatus(`${node.label} · ${node.neighbors.length} Verbindungen`);
+}
+
+function runFlight(fromNode, toNode) {
+  const look = lookAnglesFor(toNode);
+  return new Promise((resolve) => {
+    flight = {
+      mode: "travel",
+      fromKey: fromNode.key,
+      toKey: toNode.key,
+      start: performance.now(),
+      duration: 2200,
+      frames: 0,
+      minFrames: 96,
+      fromYaw: yaw,
+      fromPitch: pitch,
+      toYaw: shortestAngle(yaw, Number.isFinite(look.yaw) ? look.yaw : yaw),
+      toPitch: Number.isFinite(look.pitch) ? look.pitch : pitch,
+      fromDist: camDist,
+      toDist: 430,
+      done: resolve,
+    };
+  });
+}
+
+function runLayoutSettle(fromDepths, toDepths) {
+  return new Promise((resolve) => {
+    flight = {
+      mode: "settle",
+      fromKey: graph.origin,
+      toKey: graph.origin,
+      start: performance.now(),
+      duration: 800,
+      frames: 0,
+      minFrames: 36,
+      fromDepths,
+      toDepths,
+      fromYaw: yaw,
+      fromPitch: pitch,
+      toYaw: yaw,
+      toPitch: pitch,
+      fromDist: camDist,
+      toDist: 720,
+      done: resolve,
+    };
+  });
 }
 
 async function expandNode(node) {
@@ -339,26 +448,86 @@ function resize() {
   canvas.style.height = `${window.innerHeight}px`;
 }
 
-function project(node) {
-  const radius = 180 + node.depth * 220;
-  const x = radius * Math.sin(node.phi) * Math.cos(node.theta);
-  const y = radius * Math.cos(node.phi);
-  const z = radius * Math.sin(node.phi) * Math.sin(node.theta);
+function worldPosition(node, depth = nodeDepth(node)) {
+  const radius = 180 + depth * 220;
+  return {
+    x: radius * Math.sin(node.phi) * Math.cos(node.theta),
+    y: radius * Math.cos(node.phi),
+    z: radius * Math.sin(node.phi) * Math.sin(node.theta),
+  };
+}
 
+function lookAnglesFor(node, depth = nodeDepth(node)) {
+  const p = worldPosition(node, depth);
+  const targetYaw = Math.atan2(p.x, p.z);
+  const zz = p.x * Math.sin(targetYaw) + p.z * Math.cos(targetYaw);
+  const targetPitch = Math.atan2(p.y, zz);
+  return {
+    yaw: targetYaw,
+    pitch: Math.max(-1.1, Math.min(1.1, targetPitch)),
+  };
+}
+
+function starSize(node, scale) {
+  const links = linkCount(node);
+  const byLinks = 2.8 + Math.sqrt(links) * 2.35;
+  const near = Math.max(0.42, 1.18 - nodeDepth(node) * 0.14);
+  const focus = node.key === graph.origin ? 1.18 : 1;
+  return Math.max(2.4, byLinks * near * focus * scale * devicePixelRatio);
+}
+
+function snapshotDepths(useDisplay = true) {
+  const depths = new Map();
+  for (const node of graph.nodes.values()) {
+    depths.set(node.key, useDisplay ? nodeDepth(node) : node.depth);
+  }
+  return depths;
+}
+
+function updateFlight(now) {
+  if (!flight) return;
+  flight.frames = (flight.frames || 0) + 1;
+  const byTime = (now - flight.start) / flight.duration;
+  const byFrames = flight.frames / (flight.minFrames || 1);
+  const t = Math.min(1, Math.min(byTime, byFrames));
+  const e = easeInOutCubic(t);
+  yaw = lerp(flight.fromYaw, flight.toYaw, e);
+  pitch = lerp(flight.fromPitch, flight.toPitch, e);
+  camDist = lerp(flight.fromDist, flight.toDist, e);
+  if (flight.mode === "settle" && flight.fromDepths && flight.toDepths) {
+    for (const node of graph.nodes.values()) {
+      const from = flight.fromDepths.has(node.key) ? flight.fromDepths.get(node.key) : node.depth + 0.5;
+      const to = flight.toDepths.has(node.key) ? flight.toDepths.get(node.key) : node.depth;
+      node.displayDepth = lerp(from, to, e);
+    }
+  }
+  if (t >= 1) {
+    const done = flight.done;
+    if (flight.mode === "settle") {
+      for (const node of graph.nodes.values()) node.displayDepth = node.depth;
+    }
+    camDist = flight.toDist;
+    flight = null;
+    if (done) done();
+  }
+}
+
+function project(node) {
+  const p = worldPosition(node);
   const cy = Math.cos(yaw);
   const sy = Math.sin(yaw);
   const cp = Math.cos(pitch);
   const sp = Math.sin(pitch);
 
-  const xz = x * cy - z * sy;
-  const zz = x * sy + z * cy;
-  const yz = y * cp - zz * sp;
-  const depth = y * sp + zz * cp + 720;
-  const scale = 520 / depth;
+  const xz = p.x * cy - p.z * sy;
+  const zz = p.x * sy + p.z * cy;
+  const yz = p.y * cp - zz * sp;
+  const depth = p.y * sp + zz * cp + camDist;
+  const scale = 520 / Math.max(80, depth);
   return {
     x: width / 2 + xz * scale * devicePixelRatio,
     y: height / 2 + yz * scale * devicePixelRatio,
-    size: Math.max(2.2, (7 - node.depth) * scale * devicePixelRatio),
+    size: starSize(node, scale),
     depth,
     scale,
   };
@@ -375,7 +544,41 @@ function drawBackground() {
   }
 }
 
+function drawFlight(projected, now) {
+  if (!flight || flight.mode !== "travel") return;
+  const from = projected.get(flight.fromKey);
+  const to = projected.get(flight.toKey);
+  if (!from || !to) return;
+  const t = easeInOutCubic(Math.min(1, (now - flight.start) / flight.duration));
+  ctx.strokeStyle = "rgba(232, 238, 252, 0.55)";
+  ctx.lineWidth = 2.2 * devicePixelRatio;
+  ctx.beginPath();
+  ctx.moveTo(from.x, from.y);
+  ctx.lineTo(to.x, to.y);
+  ctx.stroke();
+
+  const px = lerp(from.x, to.x, t);
+  const py = lerp(from.y, to.y, t);
+  const glow = 11 * devicePixelRatio;
+  ctx.beginPath();
+  ctx.fillStyle = "#fff8dc";
+  ctx.shadowColor = "#fff";
+  ctx.shadowBlur = 22;
+  ctx.arc(px, py, glow, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  for (let i = 1; i <= 6; i += 1) {
+    const trailT = Math.max(0, t - i * 0.045);
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(255, 248, 220, ${0.28 - i * 0.035})`;
+    ctx.arc(lerp(from.x, to.x, trailT), lerp(from.y, to.y, trailT), glow * (1 - i * 0.1), 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
 function draw() {
+  const now = performance.now();
+  updateFlight(now);
   drawBackground();
   const projected = new Map();
   for (const node of graph.nodes.values()) {
@@ -400,17 +603,18 @@ function draw() {
     }
   }
 
+  drawFlight(projected, now);
+
   const ordered = [...graph.nodes.values()].sort(
     (a, b) => projected.get(b.key).depth - projected.get(a.key).depth,
   );
-  hoverKey = null;
   for (const node of ordered) {
     const p = projected.get(node.key);
     const color = COLORS[node.type] || COLORS.external;
     ctx.beginPath();
     ctx.fillStyle = color;
     ctx.shadowColor = color;
-    ctx.shadowBlur = node.key === graph.selected ? 24 : 10;
+    ctx.shadowBlur = node.key === graph.selected ? 28 : 8 + Math.min(18, linkCount(node));
     ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
     ctx.fill();
     ctx.shadowBlur = 0;
@@ -440,6 +644,7 @@ function hitTest(clientX, clientY) {
 }
 
 canvas.addEventListener("pointerdown", (event) => {
+  if (flight) return;
   dragging = true;
   canvas.classList.add("dragging");
   lastX = event.clientX;
@@ -452,24 +657,12 @@ window.addEventListener("pointerup", async (event) => {
   const wasDrag = dragging;
   dragging = false;
   canvas.classList.remove("dragging");
-  if (!wasDrag) return;
+  if (!wasDrag || flight) return;
   const moved = Math.hypot(event.clientX - pointerStartX, event.clientY - pointerStartY);
   if (moved > 4) return;
   const node = hitTest(event.clientX, event.clientY);
   if (!node) return;
-  graph.selected = node.key;
-  updatePanel(node);
-  if (!node.internal) {
-    setStatus("Anderes Universum — wird nicht verfolgt.");
-    return;
-  }
-  graph.origin = node.key;
-  try {
-    await expandNode(node);
-    recomputeDepths(node.key);
-  } catch (error) {
-    setStatus(error.message);
-  }
+  await flyTo(node);
 });
 
 window.addEventListener("pointermove", (event) => {
