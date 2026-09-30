@@ -22,7 +22,7 @@ Es gibt die Datenquellen für
 
 Von einem Thesaurusstern führen Linien zu verwandten Begriffen (SKOS) und zu Objekten, die diesen Begriff als Objektbezeichnung (`object_name_lref`) oder als Subject (`subject_lref`) tragen.
 
-Die Farbe der Sterne entspricht der Type des Knotens. Die Größe steigt mit der Zahl der Verlinkungen. Ein Klick auf einen Stern fliegt entlang der Verbindung zum neuen Mittelpunkt. Mit dem Mausrad zoomen.
+Die Farbe der Sterne entspricht der Type des Knotens. Die Größe steigt mit der Zahl der Verlinkungen. Ein Klick auf einen Stern fliegt entlang der Verbindung zum neuen Mittelpunkt. Der aktive Stern bleibt beim Drehen in der Bildmitte; Ziehen rotiert das Universum um ihn. Mit dem Mausrad zoomen.
 
 Verlinkungen, die aus dem Datenpool des Technischen Museums herausführen, führen in ein weiteres Universum und werden derzeit nicht verfolgt.
 
