@@ -17,11 +17,12 @@ Es gibt die Datenquellen für
 - Thesaurusbegriffe: https://data.tmw.at/thesaurus/{ID}/skos
 - Objekte: https://data.tmw.at/object/{ID}/xml
 - Akteure: https://data.tmw.at/person/{ID}/xml
-- Objekte zu einem Thesaurusbegriff: https://data.tmw.at/object/object_name_lref:{ID}/xml
+- Objekte zu einem Thesaurusbegriff (Objektbezeichnung): https://data.tmw.at/object/object_name_lref:{ID}/xml
+- Objekte zu einem Thesaurusbegriff (Schlagwort/Subject): https://data.tmw.at/object/subject_lref:{ID}/xml
 
-Von einem Thesaurusstern führen Linien zu verwandten Begriffen (SKOS) und zu Objekten, die diesen Begriff als Objektbezeichnung (`object_name_lref`) tragen.
+Von einem Thesaurusstern führen Linien zu verwandten Begriffen (SKOS) und zu Objekten, die diesen Begriff als Objektbezeichnung (`object_name_lref`) oder als Subject (`subject_lref`) tragen.
 
-Die Farbe der Sterne entspricht der Type des Knotens. Die Größe steigt mit der Zahl der Verlinkungen. Ein Klick auf einen Stern fliegt entlang der Verbindung zum neuen Mittelpunkt.
+Die Farbe der Sterne entspricht der Type des Knotens. Die Größe steigt mit der Zahl der Verlinkungen. Ein Klick auf einen Stern fliegt entlang der Verbindung zum neuen Mittelpunkt. Mit dem Mausrad zoomen.
 
 Verlinkungen, die aus dem Datenpool des Technischen Museums herausführen, führen in ein weiteres Universum und werden derzeit nicht verfolgt.
 
@@ -46,6 +47,7 @@ Search examples:
 - `person/250326` — Stirling Moss
 - `https://data.tmw.at/thesaurus/12992`
 - `https://data.tmw.at/object/object_name_lref:30832/xml` — Thesaurus 30832 (Albumblatt) und verknüpfte Objekte
+- `https://data.tmw.at/object/subject_lref:20763/xml` — Thesaurus 20763 (Stuttgart) als Subject
 - `thesaurus/30832`
 
 ## Related

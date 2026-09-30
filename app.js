@@ -34,6 +34,7 @@ let pointerStartY = 0;
 let hoverKey = null;
 let flight = null;
 let camDist = 720;
+let zoom = 1;
 
 function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2;
@@ -102,9 +103,9 @@ function parseTmwRef(value) {
   if (idOnly) {
     return { type: idOnly[1].toLowerCase(), id: idOnly[2], internal: true };
   }
-  const objectNameLref = raw.match(/object_name_lref[:/=](\d+)/i);
-  if (objectNameLref) {
-    return { type: "thesaurus", id: objectNameLref[1], internal: true };
+  const objectLref = raw.match(/(?:object_name_lref|subject_lref)[:/=](\d+)/i);
+  if (objectLref) {
+    return { type: "thesaurus", id: objectLref[1], internal: true };
   }
 
   if (/^\d+$/.test(raw)) {
@@ -220,11 +221,11 @@ function parseSkos(xmlText, fallbackId) {
 
 const MAX_THESAURUS_OBJECTS = 40;
 
-function collectObjectNameRefs(data) {
+function collectObjectSearchRefs(data) {
   const records = asList(data?.recordList?.record);
   const total = Number(data?.status?.count?.num) || records.length;
   const refs = [];
-  for (const record of records.slice(0, MAX_THESAURUS_OBJECTS)) {
+  for (const record of records) {
     const objectId = record?.id;
     if (!objectId) continue;
     refs.push({
@@ -237,10 +238,33 @@ function collectObjectNameRefs(data) {
   return { refs, total };
 }
 
-async function fetchThesaurusObjects(id) {
-  const response = await fetch(`${API_BASE}/object/object_name_lref:${id}/json`);
+async function fetchThesaurusObjectSearch(id, field) {
+  const response = await fetch(`${API_BASE}/object/${field}:${id}/json`);
   if (!response.ok) return { refs: [], total: 0 };
-  return collectObjectNameRefs(await response.json());
+  return collectObjectSearchRefs(await response.json());
+}
+
+function mergeObjectSearches(...results) {
+  const byId = new Map();
+  let total = 0;
+  for (const result of results) {
+    total += result.total || 0;
+    for (const ref of result.refs) {
+      if (!byId.has(ref.id)) byId.set(ref.id, ref);
+    }
+  }
+  return {
+    refs: [...byId.values()].slice(0, MAX_THESAURUS_OBJECTS),
+    total,
+  };
+}
+
+async function fetchThesaurusObjects(id) {
+  const searches = await Promise.all([
+    fetchThesaurusObjectSearch(id, "object_name_lref"),
+    fetchThesaurusObjectSearch(id, "subject_lref"),
+  ]);
+  return mergeObjectSearches(...searches);
 }
 
 function thesaurusObjectSummary(shown, total) {
@@ -309,6 +333,7 @@ async function jumpTo(query) {
       if (flight?.done) flight.done();
       flight = null;
       camDist = 720;
+      zoom = 1;
       graph.nodes.clear();
       const origin = ensureNode(attempt, payload.label, 0);
       origin.loaded = true;
@@ -522,7 +547,7 @@ function project(node) {
   const xz = p.x * cy - p.z * sy;
   const zz = p.x * sy + p.z * cy;
   const yz = p.y * cp - zz * sp;
-  const depth = p.y * sp + zz * cp + camDist;
+  const depth = p.y * sp + zz * cp + camDist / zoom;
   const scale = 520 / Math.max(80, depth);
   return {
     x: width / 2 + xz * scale * devicePixelRatio,
@@ -674,6 +699,12 @@ window.addEventListener("pointermove", (event) => {
   }
   hoverKey = hitTest(event.clientX, event.clientY)?.key || null;
 });
+
+canvas.addEventListener("wheel", (event) => {
+  event.preventDefault();
+  const factor = event.deltaY > 0 ? 0.91 : 1.1;
+  zoom = Math.min(4.2, Math.max(0.35, zoom * factor));
+}, { passive: false });
 
 searchForm.addEventListener("submit", (event) => {
   event.preventDefault();
