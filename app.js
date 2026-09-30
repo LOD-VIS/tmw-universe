@@ -33,6 +33,7 @@ let pointerStartX = 0;
 let pointerStartY = 0;
 let hoverKey = null;
 let flight = null;
+let camDist = 720;
 
 function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2;
@@ -305,7 +306,9 @@ async function jumpTo(query) {
     try {
       setStatus(`Lade ${attempt.type} ${attempt.id}…`);
       const payload = await fetchRecord(attempt.type, attempt.id);
+      if (flight?.done) flight.done();
       flight = null;
+      camDist = 720;
       graph.nodes.clear();
       const origin = ensureNode(attempt, payload.label, 0);
       origin.loaded = true;
@@ -340,37 +343,71 @@ async function flyTo(node) {
 
   graph.selected = node.key;
   updatePanel(node);
-  const fromKey = graph.origin;
-  const fromDepths = snapshotDepths(true);
-  graph.origin = node.key;
-  recomputeDepths(node.key);
-  const toDepths = snapshotDepths(false);
-  for (const [key, depth] of fromDepths) {
-    const existing = graph.nodes.get(key);
-    if (existing) existing.displayDepth = depth;
-  }
-  if (fromKey && fromKey !== node.key) {
-    startFlight(fromKey, node.key, fromDepths, toDepths);
-  } else {
-    for (const star of graph.nodes.values()) star.displayDepth = star.depth;
+  setStatus(`Flug zu ${node.label}…`);
+  const fromNode = graph.nodes.get(graph.origin);
+  const loading = expandNode(node);
+
+  if (fromNode && fromNode.key !== node.key) {
+    await runFlight(fromNode, node);
   }
 
+  graph.origin = node.key;
+  recomputeDepths(node.key);
   try {
-    await expandNode(node);
+    await loading;
     recomputeDepths(node.key);
-    if (flight && flight.toKey === node.key) {
-      for (const star of graph.nodes.values()) {
-        if (!flight.fromDepths.has(star.key)) {
-          flight.fromDepths.set(star.key, star.depth + 0.55);
-        }
-        flight.toDepths.set(star.key, star.depth);
-      }
-    } else {
-      for (const star of graph.nodes.values()) star.displayDepth = star.depth;
-    }
   } catch (error) {
     setStatus(error.message);
   }
+
+  const fromDepths = snapshotDepths(true);
+  const toDepths = snapshotDepths(false);
+  await runLayoutSettle(fromDepths, toDepths);
+  for (const star of graph.nodes.values()) star.displayDepth = star.depth;
+  if (!statusEl.textContent.startsWith(node.label)) {
+    setStatus(`${node.label} · ${node.neighbors.length} Verbindungen`);
+  }
+}
+
+function runFlight(fromNode, toNode) {
+  const look = lookAnglesFor(toNode);
+  return new Promise((resolve) => {
+    flight = {
+      mode: "travel",
+      fromKey: fromNode.key,
+      toKey: toNode.key,
+      start: performance.now(),
+      duration: 1600,
+      fromYaw: yaw,
+      fromPitch: pitch,
+      toYaw: shortestAngle(yaw, look.yaw),
+      toPitch: look.pitch,
+      fromDist: camDist,
+      toDist: 480,
+      done: resolve,
+    };
+  });
+}
+
+function runLayoutSettle(fromDepths, toDepths) {
+  return new Promise((resolve) => {
+    flight = {
+      mode: "settle",
+      fromKey: graph.origin,
+      toKey: graph.origin,
+      start: performance.now(),
+      duration: 700,
+      fromDepths,
+      toDepths,
+      fromYaw: yaw,
+      fromPitch: pitch,
+      toYaw: yaw,
+      toPitch: pitch,
+      fromDist: camDist,
+      toDist: 720,
+      done: resolve,
+    };
+  });
 }
 
 async function expandNode(node) {
@@ -434,7 +471,8 @@ function starSize(node, scale) {
   const links = linkCount(node);
   const byLinks = 2.8 + Math.sqrt(links) * 2.35;
   const near = Math.max(0.42, 1.18 - nodeDepth(node) * 0.14);
-  return Math.max(2.4, byLinks * near * scale * devicePixelRatio);
+  const focus = node.key === graph.origin ? 1.18 : 1;
+  return Math.max(2.4, byLinks * near * focus * scale * devicePixelRatio);
 }
 
 function snapshotDepths(useDisplay = true) {
@@ -445,37 +483,28 @@ function snapshotDepths(useDisplay = true) {
   return depths;
 }
 
-function startFlight(fromKey, toKey, fromDepths, toDepths) {
-  const target = graph.nodes.get(toKey);
-  const look = target ? lookAnglesFor(target, fromDepths.get(toKey) ?? nodeDepth(target)) : { yaw, pitch };
-  flight = {
-    fromKey,
-    toKey,
-    start: performance.now(),
-    duration: 1250,
-    fromDepths,
-    toDepths,
-    fromYaw: yaw,
-    fromPitch: pitch,
-    toYaw: shortestAngle(yaw, look.yaw),
-    toPitch: look.pitch,
-  };
-}
-
 function updateFlight(now) {
   if (!flight) return;
   const t = Math.min(1, (now - flight.start) / flight.duration);
   const e = easeInOutCubic(t);
   yaw = lerp(flight.fromYaw, flight.toYaw, e);
   pitch = lerp(flight.fromPitch, flight.toPitch, e);
-  for (const node of graph.nodes.values()) {
-    const from = flight.fromDepths.has(node.key) ? flight.fromDepths.get(node.key) : node.depth + 0.6;
-    const to = flight.toDepths.has(node.key) ? flight.toDepths.get(node.key) : node.depth;
-    node.displayDepth = lerp(from, to, e);
+  camDist = lerp(flight.fromDist, flight.toDist, e);
+  if (flight.mode === "settle" && flight.fromDepths && flight.toDepths) {
+    for (const node of graph.nodes.values()) {
+      const from = flight.fromDepths.has(node.key) ? flight.fromDepths.get(node.key) : node.depth + 0.5;
+      const to = flight.toDepths.has(node.key) ? flight.toDepths.get(node.key) : node.depth;
+      node.displayDepth = lerp(from, to, e);
+    }
   }
   if (t >= 1) {
-    for (const node of graph.nodes.values()) node.displayDepth = node.depth;
+    const done = flight.done;
+    if (flight.mode === "settle") {
+      for (const node of graph.nodes.values()) node.displayDepth = node.depth;
+    }
+    camDist = flight.toDist;
     flight = null;
+    if (done) done();
   }
 }
 
@@ -489,7 +518,7 @@ function project(node) {
   const xz = p.x * cy - p.z * sy;
   const zz = p.x * sy + p.z * cy;
   const yz = p.y * cp - zz * sp;
-  const depth = p.y * sp + zz * cp + 720;
+  const depth = p.y * sp + zz * cp + camDist;
   const scale = 520 / Math.max(80, depth);
   return {
     x: width / 2 + xz * scale * devicePixelRatio,
@@ -512,7 +541,7 @@ function drawBackground() {
 }
 
 function drawFlight(projected, now) {
-  if (!flight) return;
+  if (!flight || flight.mode !== "travel") return;
   const from = projected.get(flight.fromKey);
   const to = projected.get(flight.toKey);
   if (!from || !to) return;
@@ -526,7 +555,7 @@ function drawFlight(projected, now) {
 
   const px = lerp(from.x, to.x, t);
   const py = lerp(from.y, to.y, t);
-  const glow = 7 * devicePixelRatio;
+  const glow = 11 * devicePixelRatio;
   ctx.beginPath();
   ctx.fillStyle = "#fff8dc";
   ctx.shadowColor = "#fff";
