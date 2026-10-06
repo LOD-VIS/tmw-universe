@@ -2,12 +2,40 @@ const API_BASE = "https://data.tmw.at";
 const TMW_HOST = "data.tmw.at";
 const START_ID = "164392";
 
+const RDF_NS = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+
 const COLORS = {
   object: "#f4d35e",
   person: "#7ec8ff",
   thesaurus: "#c084fc",
   external: "#64748b",
 };
+
+const LINK_STYLE = {
+  narrower: { stroke: "rgba(52, 211, 153, 0.72)", width: 1.7 },
+  broader: { stroke: "rgba(251, 146, 60, 0.72)", width: 1.7 },
+  related: { stroke: "rgba(244, 114, 182, 0.65)", width: 1.4 },
+  object_name: { stroke: "rgba(250, 204, 21, 0.55)", width: 1.2 },
+  subject: { stroke: "rgba(167, 139, 250, 0.55)", width: 1.2 },
+  creator: { stroke: "rgba(125, 211, 252, 0.55)", width: 1.2 },
+  collection: { stroke: "rgba(165, 180, 252, 0.5)", width: 1.1 },
+  related_object: { stroke: "rgba(253, 186, 116, 0.5)", width: 1.1 },
+  link: { stroke: "rgba(148, 163, 184, 0.45)", width: 1 },
+  external: { stroke: "rgba(100, 116, 139, 0.4)", width: 1 },
+};
+
+const LINK_PRIORITY = [
+  "narrower",
+  "broader",
+  "related",
+  "object_name",
+  "subject",
+  "creator",
+  "collection",
+  "related_object",
+  "link",
+  "external",
+];
 
 const canvas = document.getElementById("space");
 const ctx = canvas.getContext("2d");
@@ -18,6 +46,7 @@ const searchInput = document.getElementById("search");
 
 const graph = {
   nodes: new Map(),
+  edges: new Map(),
   origin: null,
   selected: null,
 };
@@ -151,9 +180,60 @@ function ensureNode(ref, label, depth) {
   return node;
 }
 
-function linkNodes(from, to) {
+function edgeKey(a, b) {
+  return a < b ? `${a}||${b}` : `${b}||${a}`;
+}
+
+function linkTypeOf(fromKey, toKey) {
+  const stored = graph.edges.get(edgeKey(fromKey, toKey));
+  if (!stored) return "link";
+  for (const type of LINK_PRIORITY) {
+    if (stored.has(type)) return type;
+  }
+  return [...stored][0] || "link";
+}
+
+function linkNodes(from, to, linkType = "link") {
+  if (from.key === to.key) return;
   if (!from.neighbors.includes(to.key)) from.neighbors.push(to.key);
   if (!to.neighbors.includes(from.key)) to.neighbors.push(from.key);
+  const key = edgeKey(from.key, to.key);
+  const types = graph.edges.get(key) || new Set();
+  types.add(linkType || "link");
+  graph.edges.set(key, types);
+}
+
+function localName(el) {
+  return (el.localName || el.nodeName.split(":").pop() || "").toLowerCase();
+}
+
+function elementsByLocalName(root, name) {
+  const wanted = name.toLowerCase();
+  return [...root.getElementsByTagName("*")].filter((el) => localName(el) === wanted);
+}
+
+function rdfAttr(el, name) {
+  return (
+    el.getAttributeNS?.(RDF_NS, name)
+    || el.getAttribute(`rdf:${name}`)
+    || el.getAttribute(name)
+    || ""
+  );
+}
+
+function childText(el, names) {
+  const wanted = names.map((n) => n.toLowerCase());
+  for (const child of el.getElementsByTagName("*")) {
+    if (wanted.includes(localName(child))) {
+      const parts = [];
+      for (const node of child.childNodes) {
+        if (node.nodeType === 3) parts.push(node.textContent);
+      }
+      const text = parts.join(" ").replace(/\s+/g, " ").trim();
+      if (text) return text;
+    }
+  }
+  return "";
 }
 
 function extractLabel(record, fallback) {
@@ -164,13 +244,13 @@ function extractLabel(record, fallback) {
 function collectRefs(record) {
   const refs = [];
   const buckets = [
-    record.creator?.text,
-    record.collection?.text,
-    record.object_name?.text,
-    record.subject?.text,
-    record.related_object?.text,
+    [record.creator?.text, "creator"],
+    [record.collection?.text, "collection"],
+    [record.object_name?.text, "object_name"],
+    [record.subject?.text, "subject"],
+    [record.related_object?.text, "related_object"],
   ];
-  for (const bucket of buckets) {
+  for (const [bucket, linkType] of buckets) {
     for (const item of asList(bucket)) {
       const resource = item?.["@attributes"]?.resource || item?.resource;
       const parsed = parseTmwRef(resource);
@@ -178,6 +258,7 @@ function collectRefs(record) {
         refs.push({
           ...parsed,
           label: item.string || item.title || parsed.id,
+          linkType: parsed.internal === false ? "external" : linkType,
         });
       }
     }
@@ -189,27 +270,48 @@ function collectRefs(record) {
       refs.push({
         ...parsed,
         label: item["@attributes"]?.type || parsed.id,
+        linkType: parsed.internal === false ? "external" : "link",
       });
     }
   }
   return refs;
 }
 
+function addSkosRef(refs, seen, value, label, linkType) {
+  const parsed = parseTmwRef(value);
+  if (!parsed) return;
+  const key = `${parsed.type}:${parsed.id}:${linkType}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+  refs.push({
+    ...parsed,
+    label: label || parsed.id,
+    linkType,
+  });
+}
+
 function parseSkos(xmlText, fallbackId) {
   const doc = new DOMParser().parseFromString(xmlText, "application/xml");
-  const pref = doc.querySelector("prefLabel")?.textContent || `thesaurus ${fallbackId}`;
+  const pref = childText(doc, ["prefLabel"]) || `thesaurus ${fallbackId}`;
+  const description = childText(doc, ["scopeNote", "scopenote"]);
   const refs = [];
-  for (const node of doc.querySelectorAll("broader Concept, narrower Concept, related Concept, broader, narrower, related")) {
-    const about = node.getAttribute("rdf:about") || node.getAttribute("about");
-    const parsed = parseTmwRef(about);
-    if (parsed) {
-      refs.push({
-        ...parsed,
-        label: node.querySelector("label")?.textContent || parsed.id,
-      });
+  const seen = new Set();
+  for (const rel of ["broader", "narrower", "related"]) {
+    for (const el of elementsByLocalName(doc, rel)) {
+      addSkosRef(refs, seen, rdfAttr(el, "resource"), "", rel);
+      for (const child of el.children || []) {
+        if (localName(child) !== "concept") continue;
+        addSkosRef(
+          refs,
+          seen,
+          rdfAttr(child, "about") || rdfAttr(child, "resource"),
+          childText(child, ["label", "prefLabel"]),
+          rel,
+        );
+      }
     }
   }
-  return { label: pref, description: "", refs };
+  return { label: pref, description, refs };
 }
 
 const MAX_THESAURUS_OBJECTS = 40;
@@ -231,10 +333,12 @@ function collectObjectSearchRefs(data) {
   return { refs, total };
 }
 
-async function fetchThesaurusObjectSearch(id, field) {
+async function fetchThesaurusObjectSearch(id, field, linkType) {
   const response = await fetch(`${API_BASE}/object/${field}:${id}/json`);
   if (!response.ok) return { refs: [], total: 0 };
-  return collectObjectSearchRefs(await response.json());
+  const result = collectObjectSearchRefs(await response.json());
+  for (const ref of result.refs) ref.linkType = linkType;
+  return result;
 }
 
 function mergeObjectSearches(...results) {
@@ -243,7 +347,14 @@ function mergeObjectSearches(...results) {
   for (const result of results) {
     total += result.total || 0;
     for (const ref of result.refs) {
-      if (!byId.has(ref.id)) byId.set(ref.id, ref);
+      const existing = byId.get(ref.id);
+      if (!existing) {
+        byId.set(ref.id, { ...ref, extraLinkTypes: [] });
+        continue;
+      }
+      if (ref.linkType && ref.linkType !== existing.linkType) {
+        existing.extraLinkTypes.push(ref.linkType);
+      }
     }
   }
   return {
@@ -254,8 +365,8 @@ function mergeObjectSearches(...results) {
 
 async function fetchThesaurusObjects(id) {
   const searches = await Promise.all([
-    fetchThesaurusObjectSearch(id, "object_name_lref"),
-    fetchThesaurusObjectSearch(id, "subject_lref"),
+    fetchThesaurusObjectSearch(id, "object_name_lref", "object_name"),
+    fetchThesaurusObjectSearch(id, "subject_lref", "subject"),
   ]);
   return mergeObjectSearches(...searches);
 }
@@ -266,6 +377,31 @@ function thesaurusObjectSummary(shown, total) {
     return `${shown} Objekte mit diesem Begriff (von ${total}).`;
   }
   return `${shown} Objekt${shown === 1 ? "" : "e"} mit diesem Begriff.`;
+}
+
+function connectRef(from, ref, depth) {
+  const neighbor = ensureNode(ref, ref.label, depth);
+  const type = ref.internal === false ? "external" : (ref.linkType || "link");
+  linkNodes(from, neighbor, type);
+  for (const extra of ref.extraLinkTypes || []) {
+    linkNodes(from, neighbor, extra);
+  }
+  return neighbor;
+}
+
+async function expandOneHop(origin) {
+  const neighbors = origin.neighbors
+    .map((key) => graph.nodes.get(key))
+    .filter((node) => node && node.internal && !node.loaded && node.type !== "external");
+  if (!neighbors.length) return;
+  setStatus(`Lade Umgebung von ${origin.label}…`);
+  await Promise.all(neighbors.map(async (node) => {
+    try {
+      await expandNode(node, { quiet: true });
+    } catch {
+      node.loaded = true;
+    }
+  }));
 }
 
 async function fetchRecord(type, id) {
@@ -281,7 +417,9 @@ async function fetchRecord(type, id) {
     }
     return {
       ...parsed,
-      description: parsed.description || thesaurusObjectSummary(objects.refs.length, objects.total),
+      description: [parsed.description, thesaurusObjectSummary(objects.refs.length, objects.total)]
+        .filter(Boolean)
+        .join(" "),
       refs: [...parsed.refs, ...objects.refs],
     };
   }
@@ -328,6 +466,7 @@ async function jumpTo(query) {
       camDist = 720;
       zoom = 1;
       graph.nodes.clear();
+      graph.edges.clear();
       const origin = ensureNode(attempt, payload.label, 0);
       origin.loaded = true;
       origin.description = payload.description;
@@ -335,13 +474,13 @@ async function jumpTo(query) {
       graph.origin = origin.key;
       graph.selected = origin.key;
       for (const ref of payload.refs) {
-        const neighbor = ensureNode(ref, ref.label, 1);
-        linkNodes(origin, neighbor);
+        connectRef(origin, ref, 1);
       }
+      await expandOneHop(origin);
       recomputeDepths(origin.key);
       for (const node of graph.nodes.values()) node.displayDepth = node.depth;
       updatePanel(origin);
-      setStatus(`${origin.label} · ${payload.refs.length} Verbindungen`);
+      setStatus(`${origin.label} · ${origin.neighbors.length} Verbindungen`);
       return;
     } catch (error) {
       lastError = error;
@@ -373,6 +512,7 @@ async function flyTo(node) {
   const fromDepths = snapshotDepths(true);
   try {
     await expandNode(node);
+    await expandOneHop(node);
     updatePanel(node);
     recomputeDepths(node.key);
   } catch (error) {
@@ -430,18 +570,17 @@ function runLayoutSettle(fromDepths, toDepths) {
   });
 }
 
-async function expandNode(node) {
+async function expandNode(node, { quiet = false } = {}) {
   if (!node.internal || node.loaded || node.type === "external") return;
-  setStatus(`Erkunde ${node.label}…`);
+  if (!quiet) setStatus(`Erkunde ${node.label}…`);
   const payload = await fetchRecord(node.type, node.id);
   node.loaded = true;
   node.label = payload.label;
   node.description = payload.description;
   for (const ref of payload.refs) {
-    const neighbor = ensureNode(ref, ref.label, node.depth + 1);
-    linkNodes(node, neighbor);
+    connectRef(node, ref, node.depth + 1);
   }
-  setStatus(`${node.label} · ${node.neighbors.length} Verbindungen`);
+  if (!quiet) setStatus(`${node.label} · ${node.neighbors.length} Verbindungen`);
 }
 
 function updatePanel(node) {
@@ -621,7 +760,6 @@ function draw() {
     projected.set(node.key, project(node));
   }
 
-  ctx.lineWidth = 1 * devicePixelRatio;
   for (const node of graph.nodes.values()) {
     const from = projected.get(node.key);
     for (const neighborKey of node.neighbors) {
@@ -629,9 +767,12 @@ function draw() {
       const toNode = graph.nodes.get(neighborKey);
       const to = projected.get(neighborKey);
       if (!from || !to || !toNode) continue;
-      ctx.strokeStyle = toNode.internal && node.internal
-        ? "rgba(180, 198, 232, 0.28)"
-        : "rgba(100, 116, 139, 0.35)";
+      const linkType = (!toNode.internal || !node.internal)
+        ? "external"
+        : linkTypeOf(node.key, neighborKey);
+      const style = LINK_STYLE[linkType] || LINK_STYLE.link;
+      ctx.strokeStyle = style.stroke;
+      ctx.lineWidth = style.width * devicePixelRatio;
       ctx.beginPath();
       ctx.moveTo(from.x, from.y);
       ctx.lineTo(to.x, to.y);
