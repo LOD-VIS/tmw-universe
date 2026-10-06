@@ -43,6 +43,7 @@ const statusEl = document.getElementById("status");
 const panel = document.getElementById("panel");
 const searchForm = document.getElementById("search-form");
 const searchInput = document.getElementById("search");
+const restartBtn = document.getElementById("restart-from-star");
 
 const graph = {
   nodes: new Map(),
@@ -66,6 +67,7 @@ let camDist = 720;
 let zoom = 1;
 let camTarget = { x: 0, y: 0, z: 0 };
 let panning = false;
+let jumpSeq = 0;
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
@@ -440,6 +442,7 @@ function connectRef(from, ref, depth) {
 }
 
 async function expandOneHop(origin) {
+  const seq = jumpSeq;
   const neighbors = origin.neighbors
     .map((key) => graph.nodes.get(key))
     .filter((node) => node && node.internal && !node.loaded && node.type !== "external");
@@ -447,9 +450,10 @@ async function expandOneHop(origin) {
   setStatus(`Lade Umgebung von ${origin.label}…`);
   await Promise.all(neighbors.map(async (node) => {
     try {
+      if (seq !== jumpSeq) return;
       await expandNode(node, { quiet: true });
     } catch {
-      node.loaded = true;
+      if (seq === jumpSeq && graph.nodes.get(node.key) === node) node.loaded = true;
     }
   }));
 }
@@ -525,41 +529,53 @@ async function jumpTo(query) {
       ]
     : [{ type: parsed.type, id: parsed.id }];
 
+  const seq = ++jumpSeq;
+  if (flight?.done) flight.done();
+  flight = null;
+  restartBtn.disabled = true;
   let lastError = null;
-  for (const attempt of attempts) {
-    try {
-      setStatus(`Lade ${attempt.type} ${attempt.id}…`);
-      const payload = await fetchRecord(attempt.type, attempt.id);
-      if (flight?.done) flight.done();
-      flight = null;
-      camDist = 720;
-      zoom = 1;
-      yaw = 0.35;
-      pitch = 0.18;
-      camTarget = { x: 0, y: 0, z: 0 };
-      graph.nodes.clear();
-      graph.edges.clear();
-      const origin = ensureNode(attempt, payload.label, 0);
-      origin.loaded = true;
-      origin.description = payload.description;
-      origin.label = payload.label;
-      placeAtOrigin(origin);
-      graph.origin = origin.key;
-      graph.selected = origin.key;
-      for (const ref of payload.refs) {
-        connectRef(origin, ref, 1);
+  try {
+    for (const attempt of attempts) {
+      if (seq !== jumpSeq) return;
+      try {
+        setStatus(`Lade ${attempt.type} ${attempt.id}…`);
+        const current = graph.nodes.get(nodeKey(attempt.type, attempt.id));
+        if (current) updatePanel(current);
+        const payload = await fetchRecord(attempt.type, attempt.id);
+        if (seq !== jumpSeq) return;
+        camDist = 720;
+        zoom = 1;
+        yaw = 0.35;
+        pitch = 0.18;
+        camTarget = { x: 0, y: 0, z: 0 };
+        graph.nodes.clear();
+        graph.edges.clear();
+        const origin = ensureNode(attempt, payload.label, 0);
+        origin.loaded = true;
+        origin.description = payload.description;
+        origin.label = payload.label;
+        placeAtOrigin(origin);
+        graph.origin = origin.key;
+        graph.selected = origin.key;
+        searchInput.value = `${attempt.type}/${attempt.id}`;
+        for (const ref of payload.refs) {
+          connectRef(origin, ref, 1);
+        }
+        await expandOneHop(origin);
+        if (seq !== jumpSeq) return;
+        recomputeDepths(origin.key);
+        for (const node of graph.nodes.values()) node.displayDepth = node.depth;
+        updatePanel(origin);
+        setStatus(`${origin.label} · ${origin.neighbors.length} Verbindungen`);
+        return;
+      } catch (error) {
+        lastError = error;
       }
-      await expandOneHop(origin);
-      recomputeDepths(origin.key);
-      for (const node of graph.nodes.values()) node.displayDepth = node.depth;
-      updatePanel(origin);
-      setStatus(`${origin.label} · ${origin.neighbors.length} Verbindungen`);
-      return;
-    } catch (error) {
-      lastError = error;
     }
+    setStatus(lastError?.message || "Datensatz nicht gefunden.");
+  } finally {
+    if (seq === jumpSeq) restartBtn.disabled = false;
   }
-  setStatus(lastError?.message || "Datensatz nicht gefunden.");
 }
 
 async function flyTo(node) {
@@ -571,25 +587,32 @@ async function flyTo(node) {
   }
   if (flight) return;
 
+  const seq = jumpSeq;
   graph.selected = node.key;
   updatePanel(node);
   graph.origin = node.key;
   try {
     await expandNode(node);
+    if (seq !== jumpSeq || graph.nodes.get(node.key) !== node) return;
     await expandOneHop(node);
+    if (seq !== jumpSeq || graph.nodes.get(node.key) !== node) return;
     updatePanel(node);
     recomputeDepths(node.key);
   } catch (error) {
+    if (seq !== jumpSeq) return;
     setStatus(error.message);
   }
+  if (seq !== jumpSeq || graph.nodes.get(node.key) !== node) return;
   for (const star of graph.nodes.values()) star.displayDepth = star.depth;
   setStatus(`${node.label} · ${node.neighbors.length} Verbindungen`);
 }
 
 async function expandNode(node, { quiet = false } = {}) {
   if (!node.internal || node.loaded || node.type === "external") return;
+  const seq = jumpSeq;
   if (!quiet) setStatus(`Erkunde ${node.label}…`);
   const payload = await fetchRecord(node.type, node.id);
+  if (seq !== jumpSeq || graph.nodes.get(node.key) !== node) return;
   node.loaded = true;
   node.label = payload.label;
   node.description = payload.description;
@@ -602,6 +625,7 @@ async function expandNode(node, { quiet = false } = {}) {
 function updatePanel(node) {
   if (!node) {
     panel.hidden = true;
+    restartBtn.hidden = true;
     return;
   }
   panel.hidden = false;
@@ -613,6 +637,7 @@ function updatePanel(node) {
     : node.internal
       ? "Klicken, um diesen Stern zu laden."
       : "Diese Verlinkung führt aus dem TMW-Datenpool hinaus und wird nicht verfolgt.";
+  restartBtn.hidden = !node.internal;
 }
 
 function resize() {
@@ -850,6 +875,12 @@ canvas.addEventListener("wheel", (event) => {
 searchForm.addEventListener("submit", (event) => {
   event.preventDefault();
   jumpTo(searchInput.value);
+});
+
+restartBtn.addEventListener("click", () => {
+  const node = graph.nodes.get(graph.selected);
+  if (!node?.internal) return;
+  jumpTo(`${node.type}/${node.id}`);
 });
 
 window.addEventListener("resize", resize);

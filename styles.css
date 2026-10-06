@@ -161,6 +161,32 @@ html, body {
   font-size: 0.8rem;
 }
 
+#restart-from-star {
+  display: inline-block;
+  margin: 0.75rem 0 0.35rem;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 999px;
+  background: rgba(232, 238, 252, 0.12);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.82rem;
+  padding: 0.45rem 0.9rem;
+  cursor: pointer;
+}
+
+#restart-from-star:hover {
+  background: rgba(232, 238, 252, 0.22);
+}
+
+#restart-from-star:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+#restart-from-star[hidden] {
+  display: none;
+}
+
 .panel-hint { margin-bottom: 0; }
 
 .status {
