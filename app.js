@@ -442,6 +442,7 @@ function connectRef(from, ref, depth) {
 }
 
 async function expandOneHop(origin) {
+  const seq = jumpSeq;
   const neighbors = origin.neighbors
     .map((key) => graph.nodes.get(key))
     .filter((node) => node && node.internal && !node.loaded && node.type !== "external");
@@ -449,9 +450,10 @@ async function expandOneHop(origin) {
   setStatus(`Lade Umgebung von ${origin.label}…`);
   await Promise.all(neighbors.map(async (node) => {
     try {
+      if (seq !== jumpSeq) return;
       await expandNode(node, { quiet: true });
     } catch {
-      node.loaded = true;
+      if (seq === jumpSeq && graph.nodes.get(node.key) === node) node.loaded = true;
     }
   }));
 }
@@ -528,6 +530,8 @@ async function jumpTo(query) {
     : [{ type: parsed.type, id: parsed.id }];
 
   const seq = ++jumpSeq;
+  if (flight?.done) flight.done();
+  flight = null;
   restartBtn.disabled = true;
   let lastError = null;
   try {
@@ -535,10 +539,10 @@ async function jumpTo(query) {
       if (seq !== jumpSeq) return;
       try {
         setStatus(`Lade ${attempt.type} ${attempt.id}…`);
+        const current = graph.nodes.get(nodeKey(attempt.type, attempt.id));
+        if (current) updatePanel(current);
         const payload = await fetchRecord(attempt.type, attempt.id);
         if (seq !== jumpSeq) return;
-        if (flight?.done) flight.done();
-        flight = null;
         camDist = 720;
         zoom = 1;
         yaw = 0.35;
@@ -583,25 +587,32 @@ async function flyTo(node) {
   }
   if (flight) return;
 
+  const seq = jumpSeq;
   graph.selected = node.key;
   updatePanel(node);
   graph.origin = node.key;
   try {
     await expandNode(node);
+    if (seq !== jumpSeq || graph.nodes.get(node.key) !== node) return;
     await expandOneHop(node);
+    if (seq !== jumpSeq || graph.nodes.get(node.key) !== node) return;
     updatePanel(node);
     recomputeDepths(node.key);
   } catch (error) {
+    if (seq !== jumpSeq) return;
     setStatus(error.message);
   }
+  if (seq !== jumpSeq || graph.nodes.get(node.key) !== node) return;
   for (const star of graph.nodes.values()) star.displayDepth = star.depth;
   setStatus(`${node.label} · ${node.neighbors.length} Verbindungen`);
 }
 
 async function expandNode(node, { quiet = false } = {}) {
   if (!node.internal || node.loaded || node.type === "external") return;
+  const seq = jumpSeq;
   if (!quiet) setStatus(`Erkunde ${node.label}…`);
   const payload = await fetchRecord(node.type, node.id);
+  if (seq !== jumpSeq || graph.nodes.get(node.key) !== node) return;
   node.loaded = true;
   node.label = payload.label;
   node.description = payload.description;
