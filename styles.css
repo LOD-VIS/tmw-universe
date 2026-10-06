@@ -28,6 +28,7 @@ html, body {
 }
 
 #space.dragging { cursor: grabbing; }
+#space.panning { cursor: move; }
 
 .hud {
   position: relative;

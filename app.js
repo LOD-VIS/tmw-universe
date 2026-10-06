@@ -64,10 +64,8 @@ let hoverKey = null;
 let flight = null;
 let camDist = 720;
 let zoom = 1;
-
-function easeInOutCubic(t) {
-  return t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2;
-}
+let camTarget = { x: 0, y: 0, z: 0 };
+let panning = false;
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
@@ -181,6 +179,10 @@ function ensureNode(ref, label, depth) {
     scatterV: hash01(key, 19),
     scatterW: hash01(key, 31),
     scatterJ: hash01(key, 47),
+    x: 0,
+    y: 0,
+    z: 0,
+    placed: false,
     displayDepth: depth,
   };
   graph.nodes.set(key, node);
@@ -386,6 +388,31 @@ function thesaurusObjectSummary(shown, total) {
   return `${shown} Objekt${shown === 1 ? "" : "e"} mit diesem Begriff.`;
 }
 
+function placeAtOrigin(node) {
+  node.x = 0;
+  node.y = 0;
+  node.z = 0;
+  node.placed = true;
+}
+
+function placeNear(parent, node) {
+  if (node.placed) return;
+  if (!parent?.placed) {
+    placeAtOrigin(node);
+    return;
+  }
+  const u = node.scatterU ?? hash01(node.key, 7);
+  const v = node.scatterV ?? hash01(node.key, 19);
+  const w = node.scatterW ?? hash01(node.key, 31);
+  const theta = u * Math.PI * 2;
+  const phi = Math.acos(2 * v - 1);
+  const dist = 110 + w * 220;
+  node.x = parent.x + dist * Math.sin(phi) * Math.cos(theta);
+  node.y = parent.y + dist * Math.cos(phi);
+  node.z = parent.z + dist * Math.sin(phi) * Math.sin(theta);
+  node.placed = true;
+}
+
 function connectRef(from, ref, depth) {
   const neighbor = ensureNode(ref, ref.label, depth);
   const type = ref.internal === false ? "external" : (ref.linkType || "link");
@@ -393,6 +420,7 @@ function connectRef(from, ref, depth) {
   for (const extra of ref.extraLinkTypes || []) {
     linkNodes(from, neighbor, extra);
   }
+  placeNear(from, neighbor);
   return neighbor;
 }
 
@@ -472,12 +500,16 @@ async function jumpTo(query) {
       flight = null;
       camDist = 720;
       zoom = 1;
+      yaw = 0.35;
+      pitch = 0.18;
+      camTarget = { x: 0, y: 0, z: 0 };
       graph.nodes.clear();
       graph.edges.clear();
       const origin = ensureNode(attempt, payload.label, 0);
       origin.loaded = true;
       origin.description = payload.description;
       origin.label = payload.label;
+      placeAtOrigin(origin);
       graph.origin = origin.key;
       graph.selected = origin.key;
       for (const ref of payload.refs) {
@@ -507,16 +539,7 @@ async function flyTo(node) {
 
   graph.selected = node.key;
   updatePanel(node);
-  const fromNode = graph.nodes.get(graph.origin);
-
-  if (fromNode && fromNode.key !== node.key) {
-    setStatus(`Flug zu ${node.label}…`);
-    await runFlight(fromNode, node);
-  }
-
   graph.origin = node.key;
-  recomputeDepths(node.key);
-  const fromDepths = snapshotDepths(true);
   try {
     await expandNode(node);
     await expandOneHop(node);
@@ -525,56 +548,8 @@ async function flyTo(node) {
   } catch (error) {
     setStatus(error.message);
   }
-  const toDepths = snapshotDepths(false);
-  await runLayoutSettle(fromDepths, toDepths);
   for (const star of graph.nodes.values()) star.displayDepth = star.depth;
   setStatus(`${node.label} · ${node.neighbors.length} Verbindungen`);
-}
-
-function runFlight(fromNode, toNode) {
-  return new Promise((resolve) => {
-    flight = {
-      mode: "travel",
-      fromKey: fromNode.key,
-      toKey: toNode.key,
-      start: performance.now(),
-      duration: 2200,
-      frames: 0,
-      minFrames: 96,
-      fromYaw: yaw,
-      fromPitch: pitch,
-      toYaw: yaw,
-      toPitch: pitch,
-      fromDist: camDist,
-      toDist: 430,
-      e: 0,
-      done: resolve,
-    };
-  });
-}
-
-function runLayoutSettle(fromDepths, toDepths) {
-  return new Promise((resolve) => {
-    flight = {
-      mode: "settle",
-      fromKey: graph.origin,
-      toKey: graph.origin,
-      start: performance.now(),
-      duration: 800,
-      frames: 0,
-      minFrames: 36,
-      fromDepths,
-      toDepths,
-      fromYaw: yaw,
-      fromPitch: pitch,
-      toYaw: yaw,
-      toPitch: pitch,
-      fromDist: camDist,
-      toDist: 720,
-      e: 0,
-      done: resolve,
-    };
-  });
 }
 
 async function expandNode(node, { quiet = false } = {}) {
@@ -613,22 +588,9 @@ function resize() {
   canvas.style.height = `${window.innerHeight}px`;
 }
 
-function worldPosition(node, depth = nodeDepth(node)) {
-  if (depth <= 0) return { x: 0, y: 0, z: 0 };
-  const u = node.scatterU ?? hash01(node.key, 7);
-  const v = node.scatterV ?? hash01(node.key, 19);
-  const w = node.scatterW ?? hash01(node.key, 31);
-  const j = node.scatterJ ?? hash01(node.key, 47);
-  const theta = u * Math.PI * 2;
-  const phi = Math.acos(2 * v - 1);
-  const radius = (70 + depth * 210) * (0.38 + w * 1.25);
-  const wobble = (28 + depth * 36) * (j - 0.5);
-  const side = (hash01(node.key, 67) - 0.5) * (22 + depth * 24);
-  return {
-    x: radius * Math.sin(phi) * Math.cos(theta) + wobble,
-    y: radius * Math.cos(phi) + side,
-    z: radius * Math.sin(phi) * Math.sin(theta) - wobble * 0.6,
-  };
+function worldPosition(node) {
+  if (node?.placed) return { x: node.x, y: node.y, z: node.z };
+  return { x: 0, y: 0, z: 0 };
 }
 
 function starSize(node, scale) {
@@ -639,64 +601,28 @@ function starSize(node, scale) {
   return Math.max(2.4, byLinks * near * focus * scale * devicePixelRatio);
 }
 
-function snapshotDepths(useDisplay = true) {
-  const depths = new Map();
-  for (const node of graph.nodes.values()) {
-    depths.set(node.key, useDisplay ? nodeDepth(node) : node.depth);
-  }
-  return depths;
-}
-
-function updateFlight(now) {
-  if (!flight) return;
-  flight.frames = (flight.frames || 0) + 1;
-  const byTime = (now - flight.start) / flight.duration;
-  const byFrames = flight.frames / (flight.minFrames || 1);
-  const t = Math.min(1, Math.min(byTime, byFrames));
-  const e = easeInOutCubic(t);
-  flight.e = e;
-  yaw = lerp(flight.fromYaw, flight.toYaw, e);
-  pitch = lerp(flight.fromPitch, flight.toPitch, e);
-  camDist = lerp(flight.fromDist, flight.toDist, e);
-  if (flight.mode === "settle" && flight.fromDepths && flight.toDepths) {
-    for (const node of graph.nodes.values()) {
-      const from = flight.fromDepths.has(node.key) ? flight.fromDepths.get(node.key) : node.depth + 0.5;
-      const to = flight.toDepths.has(node.key) ? flight.toDepths.get(node.key) : node.depth;
-      node.displayDepth = lerp(from, to, e);
-    }
-  }
-  if (t >= 1) {
-    const done = flight.done;
-    if (flight.mode === "travel" && flight.toKey) {
-      graph.origin = flight.toKey;
-    }
-    if (flight.mode === "settle") {
-      for (const node of graph.nodes.values()) node.displayDepth = node.depth;
-    }
-    camDist = flight.toDist;
-    flight.e = 1;
-    flight = null;
-    if (done) done();
-  }
-}
+function updateFlight() {}
 
 function cameraFocus() {
-  if (flight?.mode === "travel") {
-    const from = graph.nodes.get(flight.fromKey);
-    const to = graph.nodes.get(flight.toKey);
-    if (from && to) {
-      const e = flight.e ?? 0;
-      const a = worldPosition(from);
-      const b = worldPosition(to);
-      return {
-        x: lerp(a.x, b.x, e),
-        y: lerp(a.y, b.y, e),
-        z: lerp(a.z, b.z, e),
-      };
-    }
-  }
-  const origin = graph.nodes.get(graph.origin);
-  return origin ? worldPosition(origin) : { x: 0, y: 0, z: 0 };
+  return camTarget;
+}
+
+function panView(dx, dy) {
+  const scale = 520 / Math.max(80, camDist / zoom);
+  const moveX = dx / scale;
+  const moveY = dy / scale;
+  const cy = Math.cos(yaw);
+  const sy = Math.sin(yaw);
+  const cp = Math.cos(pitch);
+  const sp = Math.sin(pitch);
+  const rightX = cy;
+  const rightZ = -sy;
+  const downX = -sp * sy;
+  const downY = cp;
+  const downZ = -sp * cy;
+  camTarget.x -= rightX * moveX + downX * moveY;
+  camTarget.y -= downY * moveY;
+  camTarget.z -= rightZ * moveX + downZ * moveY;
 }
 
 function project(node) {
@@ -837,20 +763,27 @@ function hitTest(clientX, clientY) {
 }
 
 canvas.addEventListener("pointerdown", (event) => {
-  if (flight) return;
   dragging = true;
+  panning = event.shiftKey || event.altKey || event.button === 1 || event.button === 2;
   canvas.classList.add("dragging");
+  if (panning) canvas.classList.add("panning");
   lastX = event.clientX;
   lastY = event.clientY;
   pointerStartX = event.clientX;
   pointerStartY = event.clientY;
 });
 
+canvas.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+});
+
 window.addEventListener("pointerup", async (event) => {
   const wasDrag = dragging;
+  const wasPan = panning;
   dragging = false;
-  canvas.classList.remove("dragging");
-  if (!wasDrag || flight) return;
+  panning = false;
+  canvas.classList.remove("dragging", "panning");
+  if (!wasDrag || wasPan) return;
   const moved = Math.hypot(event.clientX - pointerStartX, event.clientY - pointerStartY);
   if (moved > 4) return;
   const node = hitTest(event.clientX, event.clientY);
@@ -860,8 +793,14 @@ window.addEventListener("pointerup", async (event) => {
 
 window.addEventListener("pointermove", (event) => {
   if (dragging) {
-    yaw += (event.clientX - lastX) * 0.005;
-    pitch = Math.max(-1.1, Math.min(1.1, pitch + (event.clientY - lastY) * 0.005));
+    const dx = event.clientX - lastX;
+    const dy = event.clientY - lastY;
+    if (panning || event.shiftKey || event.altKey) {
+      panView(dx, dy);
+    } else {
+      yaw += dx * 0.005;
+      pitch = Math.max(-1.1, Math.min(1.1, pitch + dy * 0.005));
+    }
     lastX = event.clientX;
     lastY = event.clientY;
   }
