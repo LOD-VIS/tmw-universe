@@ -8,7 +8,7 @@ This repository is the home of the **TMW Universe** project, hosted by [LOD-VIS]
 
 Die Daten der Open-Data-Schnittstelle unter https://data.tmw.at sollen in einem Webbrowser visualisiert werden. Das Vorbild für das Aussehen ist das Universum.
 
-Einzelne Datensätze sind Sterne, Verlinkungen dazwischen werden durch Linien dargestellt. Die Entfernung der Sterne vom Betrachter hängt von der Tiefe der Verlinkungen ab.
+Einzelne Datensätze sind Sterne, Verlinkungen dazwischen werden durch Linien dargestellt. Die Entfernung der Sterne vom aktiven Mittelpunkt hängt von der Tiefe der Verlinkungen ab; die Positionen sind unregelmäßig gestreut, nicht auf Kreisen.
 
 Die Basisadresse lautet: https://data.tmw.at
 

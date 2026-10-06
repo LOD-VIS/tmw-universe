@@ -110,12 +110,17 @@ function asList(value) {
   return Array.isArray(value) ? value : [value];
 }
 
-function hashAngle(key, salt) {
-  let h = salt;
+function hash01(key, salt) {
+  let h = salt >>> 0;
   for (let i = 0; i < key.length; i += 1) {
-    h = (h * 33 + key.charCodeAt(i)) >>> 0;
+    h = Math.imul(h ^ key.charCodeAt(i), 2654435761) >>> 0;
   }
-  return (h % 1000) / 1000 * Math.PI * 2;
+  h ^= h >>> 16;
+  h = Math.imul(h, 2246822519) >>> 0;
+  h ^= h >>> 13;
+  h = Math.imul(h, 3266489917) >>> 0;
+  h ^= h >>> 16;
+  return h / 4294967296;
 }
 
 function parseTmwRef(value) {
@@ -172,8 +177,10 @@ function ensureNode(ref, label, depth) {
     loaded: false,
     description: "",
     neighbors: [],
-    theta: hashAngle(key, 7),
-    phi: 0.35 + (hashAngle(key, 19) % 1000) / 1000 * 1.9,
+    scatterU: hash01(key, 7),
+    scatterV: hash01(key, 19),
+    scatterW: hash01(key, 31),
+    scatterJ: hash01(key, 47),
     displayDepth: depth,
   };
   graph.nodes.set(key, node);
@@ -607,11 +614,20 @@ function resize() {
 }
 
 function worldPosition(node, depth = nodeDepth(node)) {
-  const radius = 180 + depth * 220;
+  if (depth <= 0) return { x: 0, y: 0, z: 0 };
+  const u = node.scatterU ?? hash01(node.key, 7);
+  const v = node.scatterV ?? hash01(node.key, 19);
+  const w = node.scatterW ?? hash01(node.key, 31);
+  const j = node.scatterJ ?? hash01(node.key, 47);
+  const theta = u * Math.PI * 2;
+  const phi = Math.acos(2 * v - 1);
+  const radius = (70 + depth * 210) * (0.38 + w * 1.25);
+  const wobble = (28 + depth * 36) * (j - 0.5);
+  const side = (hash01(node.key, 67) - 0.5) * (22 + depth * 24);
   return {
-    x: radius * Math.sin(node.phi) * Math.cos(node.theta),
-    y: radius * Math.cos(node.phi),
-    z: radius * Math.sin(node.phi) * Math.sin(node.theta),
+    x: radius * Math.sin(phi) * Math.cos(theta) + wobble,
+    y: radius * Math.cos(phi) + side,
+    z: radius * Math.sin(phi) * Math.sin(theta) - wobble * 0.6,
   };
 }
 
