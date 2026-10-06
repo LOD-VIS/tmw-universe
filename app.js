@@ -225,7 +225,11 @@ function childText(el, names) {
   const wanted = names.map((n) => n.toLowerCase());
   for (const child of el.getElementsByTagName("*")) {
     if (wanted.includes(localName(child))) {
-      const text = (child.textContent || "").replace(/\s+/g, " ").trim();
+      const parts = [];
+      for (const node of child.childNodes) {
+        if (node.nodeType === 3) parts.push(node.textContent);
+      }
+      const text = parts.join(" ").replace(/\s+/g, " ").trim();
       if (text) return text;
     }
   }
@@ -393,7 +397,7 @@ async function expandOneHop(origin) {
   setStatus(`Lade Umgebung von ${origin.label}…`);
   await Promise.all(neighbors.map(async (node) => {
     try {
-      await expandNode(node);
+      await expandNode(node, { quiet: true });
     } catch {
       node.loaded = true;
     }
@@ -566,9 +570,9 @@ function runLayoutSettle(fromDepths, toDepths) {
   });
 }
 
-async function expandNode(node) {
+async function expandNode(node, { quiet = false } = {}) {
   if (!node.internal || node.loaded || node.type === "external") return;
-  setStatus(`Erkunde ${node.label}…`);
+  if (!quiet) setStatus(`Erkunde ${node.label}…`);
   const payload = await fetchRecord(node.type, node.id);
   node.loaded = true;
   node.label = payload.label;
@@ -576,7 +580,7 @@ async function expandNode(node) {
   for (const ref of payload.refs) {
     connectRef(node, ref, node.depth + 1);
   }
-  setStatus(`${node.label} · ${node.neighbors.length} Verbindungen`);
+  if (!quiet) setStatus(`${node.label} · ${node.neighbors.length} Verbindungen`);
 }
 
 function updatePanel(node) {
