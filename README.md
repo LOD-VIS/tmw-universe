@@ -23,7 +23,7 @@ Es gibt die Datenquellen für
 
 Von einem Thesaurusstern führen Linien zu verwandten Begriffen (SKOS: `broader`, `narrower`, `related`) und zu Objekten, die diesen Begriff als Objektbezeichnung (`object_name_lref`) oder als Subject (`subject_lref`) tragen. Von einem Personenstern führen Linien zu Objekten, die diese Person als Urheber tragen (`creator_lref`). Die Linienfarbe folgt dem Linktyp. Beim Anspringen eines Sterns werden die Verbindungen seiner Nachbarn eine weitere Ebene mitgeladen.
 
-Die Farbe der Sterne entspricht der Type des Knotens. Die Größe steigt mit der Zahl der Verlinkungen. Ein Klick auf einen Stern lädt seine Verknüpfungen an Ort und Stelle. Ziehen dreht die Ansicht, Umschalt+Ziehen oder rechte Maustaste verschiebt das Bild. Mit dem Mausrad zoomen.
+Die Farbe der Sterne entspricht der Type des Knotens. Die Größe steigt mit der Zahl der Verlinkungen. Ein Klick auf einen Stern lädt seine Verknüpfungen an Ort und Stelle. In der Beschreibungsbox startet „Von hier neu starten“ die Suche bei diesem Stern neu und löscht alle anderen Sterne. Ziehen dreht die Ansicht, Umschalt+Ziehen oder rechte Maustaste verschiebt das Bild. Mit dem Mausrad zoomen.
 
 Verlinkungen, die aus dem Datenpool des Technischen Museums herausführen, führen in ein weiteres Universum und werden derzeit nicht verfolgt.
 
