@@ -128,9 +128,13 @@ function parseTmwRef(value) {
   if (idOnly) {
     return { type: idOnly[1].toLowerCase(), id: idOnly[2], internal: true };
   }
-  const objectLref = raw.match(/(?:object_name_lref|subject_lref)[:/=](\d+)/i);
-  if (objectLref) {
-    return { type: "thesaurus", id: objectLref[1], internal: true };
+  const lref = raw.match(/(object_name_lref|subject_lref|creator_lref)[:/=](\d+)/i);
+  if (lref) {
+    const field = lref[1].toLowerCase();
+    if (field === "creator_lref") {
+      return { type: "person", id: lref[2], internal: true };
+    }
+    return { type: "thesaurus", id: lref[2], internal: true };
   }
 
   if (/^\d+$/.test(raw)) {
@@ -323,7 +327,7 @@ function parseSkos(xmlText, fallbackId) {
   return { label: pref, description, refs };
 }
 
-const MAX_THESAURUS_OBJECTS = 40;
+const MAX_LINKED_OBJECTS = 40;
 
 function collectObjectSearchRefs(data) {
   const records = asList(data?.recordList?.record);
@@ -342,8 +346,10 @@ function collectObjectSearchRefs(data) {
   return { refs, total };
 }
 
-async function fetchThesaurusObjectSearch(id, field, linkType) {
-  const response = await fetch(`${API_BASE}/object/${field}:${id}/json`);
+async function fetchObjectFieldSearch(id, field, linkType) {
+  const response = await fetch(
+    `${API_BASE}/object/${field}:${id}|limit=${MAX_LINKED_OBJECTS}/json`,
+  );
   if (!response.ok) return { refs: [], total: 0 };
   const result = collectObjectSearchRefs(await response.json());
   for (const ref of result.refs) ref.linkType = linkType;
@@ -367,25 +373,34 @@ function mergeObjectSearches(...results) {
     }
   }
   return {
-    refs: [...byId.values()].slice(0, MAX_THESAURUS_OBJECTS),
+    refs: [...byId.values()].slice(0, MAX_LINKED_OBJECTS),
     total,
   };
 }
 
 async function fetchThesaurusObjects(id) {
   const searches = await Promise.all([
-    fetchThesaurusObjectSearch(id, "object_name_lref", "object_name"),
-    fetchThesaurusObjectSearch(id, "subject_lref", "subject"),
+    fetchObjectFieldSearch(id, "object_name_lref", "object_name"),
+    fetchObjectFieldSearch(id, "subject_lref", "subject"),
   ]);
   return mergeObjectSearches(...searches);
 }
 
-function thesaurusObjectSummary(shown, total) {
+async function fetchPersonObjects(id) {
+  const search = await fetchObjectFieldSearch(id, "creator_lref", "creator");
+  return {
+    refs: search.refs.slice(0, MAX_LINKED_OBJECTS),
+    total: search.total,
+  };
+}
+
+function linkedObjectSummary(shown, total, kind) {
   if (!shown) return "";
+  const label = shown === 1 ? kind.replace(/^Objekte /, "Objekt ") : kind;
   if (total > shown) {
-    return `${shown} Objekte mit diesem Begriff (von ${total}).`;
+    return `${shown} ${label} (von ${total}).`;
   }
-  return `${shown} Objekt${shown === 1 ? "" : "e"} mit diesem Begriff.`;
+  return `${shown} ${label}.`;
 }
 
 function placeAtOrigin(node) {
@@ -452,7 +467,7 @@ async function fetchRecord(type, id) {
     }
     return {
       ...parsed,
-      description: [parsed.description, thesaurusObjectSummary(objects.refs.length, objects.total)]
+      description: [parsed.description, linkedObjectSummary(objects.refs.length, objects.total, "Objekte mit diesem Begriff")]
         .filter(Boolean)
         .join(" "),
       refs: [...parsed.refs, ...objects.refs],
@@ -464,10 +479,29 @@ async function fetchRecord(type, id) {
   const data = await response.json();
   const record = data?.recordList?.record;
   if (!record) throw new Error(`${type} ${id} nicht gefunden`);
+  const label = extractLabel(record, `${type} ${id}`);
+  const refs = collectRefs(record);
+  if (type !== "person") {
+    return {
+      label,
+      description: record.description || record.biography || "",
+      refs,
+      record,
+    };
+  }
+
+  let objects = { refs: [], total: 0 };
+  try {
+    objects = await fetchPersonObjects(id);
+  } catch {
+    objects = { refs: [], total: 0 };
+  }
   return {
-    label: extractLabel(record, `${type} ${id}`),
-    description: record.description || record.biography || "",
-    refs: collectRefs(record),
+    label,
+    description: [record.description || record.biography || "", linkedObjectSummary(objects.refs.length, objects.total, "Objekte dieser Person")]
+      .filter(Boolean)
+      .join(" "),
+    refs: [...refs, ...objects.refs],
     record,
   };
 }
