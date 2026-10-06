@@ -107,11 +107,31 @@ html, body {
 .swatch.thesaurus { background: var(--star-thesaurus); color: var(--star-thesaurus); }
 .swatch.external { background: var(--star-external); color: var(--star-external); }
 
+.legend.links {
+  flex-basis: 100%;
+}
+
+.line {
+  display: inline-block;
+  width: 0.9rem;
+  height: 0.18rem;
+  margin-right: 0.35rem;
+  vertical-align: 0.15rem;
+  border-radius: 99px;
+}
+
+.line.narrower { background: #34d399; box-shadow: 0 0 8px #34d399; }
+.line.broader { background: #fb923c; box-shadow: 0 0 8px #fb923c; }
+.line.related { background: #f472b6; box-shadow: 0 0 8px #f472b6; }
+.line.object-name { background: #facc15; box-shadow: 0 0 8px #facc15; }
+.line.subject { background: #a78bfa; box-shadow: 0 0 8px #a78bfa; }
+.line.creator { background: #7dd3fc; box-shadow: 0 0 8px #7dd3fc; }
+
 .panel {
   position: absolute;
   z-index: 2;
   right: 1.25rem;
-  top: 6.5rem;
+  top: 8.5rem;
   width: min(24rem, calc(100vw - 2rem));
   max-height: calc(100vh - 8rem);
   overflow: auto;

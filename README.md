@@ -20,7 +20,7 @@ Es gibt die Datenquellen für
 - Objekte zu einem Thesaurusbegriff (Objektbezeichnung): https://data.tmw.at/object/object_name_lref:{ID}/xml
 - Objekte zu einem Thesaurusbegriff (Schlagwort/Subject): https://data.tmw.at/object/subject_lref:{ID}/xml
 
-Von einem Thesaurusstern führen Linien zu verwandten Begriffen (SKOS) und zu Objekten, die diesen Begriff als Objektbezeichnung (`object_name_lref`) oder als Subject (`subject_lref`) tragen.
+Von einem Thesaurusstern führen Linien zu verwandten Begriffen (SKOS: `broader`, `narrower`, `related`) und zu Objekten, die diesen Begriff als Objektbezeichnung (`object_name_lref`) oder als Subject (`subject_lref`) tragen. Die Linienfarbe folgt dem Linktyp. Beim Anspringen eines Sterns werden die Verbindungen seiner Nachbarn eine weitere Ebene mitgeladen.
 
 Die Farbe der Sterne entspricht der Type des Knotens. Die Größe steigt mit der Zahl der Verlinkungen. Ein Klick auf einen Stern fliegt entlang der Verbindung zum neuen Mittelpunkt. Der aktive Stern bleibt beim Drehen in der Bildmitte; Ziehen rotiert das Universum um ihn. Mit dem Mausrad zoomen.
 
@@ -48,7 +48,7 @@ Search examples:
 - `https://data.tmw.at/thesaurus/12992`
 - `https://data.tmw.at/object/object_name_lref:30832/xml` — Thesaurus 30832 (Albumblatt) und verknüpfte Objekte
 - `https://data.tmw.at/object/subject_lref:20763/xml` — Thesaurus 20763 (Stuttgart) als Subject
-- `thesaurus/30832`
+- `https://data.tmw.at/thesaurus/51396` — Objektbezeichnung (oberster Thesaurus, mit engeren Begriffen)
 
 ## Related
 
