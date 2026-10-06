@@ -8,7 +8,7 @@ This repository is the home of the **TMW Universe** project, hosted by [LOD-VIS]
 
 Die Daten der Open-Data-Schnittstelle unter https://data.tmw.at sollen in einem Webbrowser visualisiert werden. Das Vorbild für das Aussehen ist das Universum.
 
-Einzelne Datensätze sind Sterne, Verlinkungen dazwischen werden durch Linien dargestellt. Die Entfernung der Sterne vom aktiven Mittelpunkt hängt von der Tiefe der Verlinkungen ab; die Positionen sind unregelmäßig gestreut, nicht auf Kreisen.
+Einzelne Datensätze sind Sterne, Verlinkungen dazwischen werden durch Linien dargestellt. Neue Verbindungen lagern sich um den bestehenden Stern an, ohne ihn zu verschieben — so wächst ein zusammenhängendes Universum. Die Kamera lässt sich drehen und verschieben.
 
 Die Basisadresse lautet: https://data.tmw.at
 
@@ -22,7 +22,7 @@ Es gibt die Datenquellen für
 
 Von einem Thesaurusstern führen Linien zu verwandten Begriffen (SKOS: `broader`, `narrower`, `related`) und zu Objekten, die diesen Begriff als Objektbezeichnung (`object_name_lref`) oder als Subject (`subject_lref`) tragen. Die Linienfarbe folgt dem Linktyp. Beim Anspringen eines Sterns werden die Verbindungen seiner Nachbarn eine weitere Ebene mitgeladen.
 
-Die Farbe der Sterne entspricht der Type des Knotens. Die Größe steigt mit der Zahl der Verlinkungen. Ein Klick auf einen Stern fliegt entlang der Verbindung zum neuen Mittelpunkt. Der aktive Stern bleibt beim Drehen in der Bildmitte; Ziehen rotiert das Universum um ihn. Mit dem Mausrad zoomen.
+Die Farbe der Sterne entspricht der Type des Knotens. Die Größe steigt mit der Zahl der Verlinkungen. Ein Klick auf einen Stern lädt seine Verknüpfungen an Ort und Stelle. Ziehen dreht die Ansicht, Umschalt+Ziehen oder rechte Maustaste verschiebt das Bild. Mit dem Mausrad zoomen.
 
 Verlinkungen, die aus dem Datenpool des Technischen Museums herausführen, führen in ein weiteres Universum und werden derzeit nicht verfolgt.
 
