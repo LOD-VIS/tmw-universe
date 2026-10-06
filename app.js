@@ -253,7 +253,7 @@ function childText(el, names) {
 
 function extractLabel(record, fallback) {
   const title = asList(record.title?.text)[0]?.string || record.title?.string;
-  return title || record.name || record.prefLabel || fallback;
+  return title || record.name || record.prefLabel || record.term || fallback;
 }
 
 function collectRefs(record) {
@@ -510,11 +510,109 @@ async function fetchRecord(type, id) {
   };
 }
 
+function encodeSearchValue(value) {
+  return encodeURIComponent(value).replace(/%2A/gi, "*");
+}
+
+function nameQueryVariants(raw) {
+  const q = raw.trim().replace(/\|/g, " ");
+  const variants = [];
+  const add = (value) => {
+    const next = String(value || "").trim();
+    if (next && !variants.includes(next)) variants.push(next);
+  };
+  add(q);
+  const words = q.replace(/[()]/g, " ").split(/[\s,;]+/).filter((word) => word.length > 1);
+  if (words.length >= 2) {
+    add(`${words[words.length - 1]}, ${words.slice(0, -1).join(" ")}`);
+  }
+  if (q && !q.endsWith("*")) add(`${q}*`);
+  return variants.slice(0, 3);
+}
+
+function normalizeSearchText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+function scoreNameHit(query, hit) {
+  const q = normalizeSearchText(query.replace(/\*$/, ""));
+  const label = normalizeSearchText(hit.label);
+  if (!q || !label) return 0;
+  if (label === q) return 1000;
+  if (label.startsWith(q)) return 850 - Math.min(label.length, 80);
+  if (` ${label} `.includes(` ${q} `)) return 720 - Math.min(label.length, 80);
+  if (label.includes(q)) return 540 - Math.min(label.length, 80);
+  const tokens = q.split(/\s+/).filter((token) => token.length > 1);
+  if (!tokens.length) return 0;
+  const hits = tokens.filter((token) => label.includes(token)).length;
+  if (!hits) return 0;
+  return (hits / tokens.length) * 420 - Math.min(label.length, 80);
+}
+
+async function fetchNameHits(type, field, query) {
+  const response = await fetch(
+    `${API_BASE}/${type}/${field}:${encodeSearchValue(query)}|limit=20/json`,
+  );
+  if (!response.ok) return [];
+  const data = await response.json();
+  const hits = [];
+  for (const record of asList(data?.recordList?.record)) {
+    const id = record?.id;
+    if (!id) continue;
+    hits.push({
+      type,
+      id: String(id),
+      internal: true,
+      label: extractLabel(record, `${type} ${id}`),
+    });
+  }
+  return hits;
+}
+
+async function resolveNameQuery(query) {
+  const variants = nameQueryVariants(query);
+  const searches = [];
+  for (const variant of variants) {
+    searches.push(fetchNameHits("object", "title", variant));
+    searches.push(fetchNameHits("person", "name", variant));
+    searches.push(fetchNameHits("thesaurus", "term", variant));
+  }
+  const groups = await Promise.all(searches.map((job) => job.catch(() => [])));
+  const byKey = new Map();
+  for (const hit of groups.flat()) {
+    const key = nodeKey(hit.type, hit.id);
+    if (!byKey.has(key)) byKey.set(key, hit);
+  }
+  return [...byKey.values()]
+    .map((hit) => ({ ...hit, score: scoreNameHit(query, hit) }))
+    .filter((hit) => hit.score > 0)
+    .sort((a, b) => b.score - a.score || typeRank(a.type) - typeRank(b.type) || a.label.length - b.label.length);
+}
+
+function typeRank(type) {
+  return { thesaurus: 0, person: 1, object: 2 }[type] ?? 9;
+}
+
 async function jumpTo(query) {
-  const parsed = parseTmwRef(query);
+  const trimmed = String(query || "").trim();
+  let parsed = parseTmwRef(trimmed);
   if (!parsed) {
-    setStatus("Bitte eine TMW-ID oder URL eingeben, z. B. 164392 oder person/250326.");
-    return;
+    if (!trimmed) {
+      setStatus("Bitte einen Namen, eine TMW-ID oder eine URL eingeben, z. B. Silberpfeil oder person/250326.");
+      return;
+    }
+    setStatus(`Suche „${trimmed}"…`);
+    const hits = await resolveNameQuery(trimmed);
+    if (!hits.length) {
+      setStatus(`Kein Treffer für „${trimmed}".`);
+      return;
+    }
+    parsed = hits[0];
   }
   if (!parsed.internal) {
     setStatus("Links außerhalb von data.tmw.at gehören zu einem anderen Universum und werden nicht verfolgt.");
