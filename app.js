@@ -526,7 +526,7 @@ function nameQueryVariants(raw) {
   if (words.length >= 2) {
     add(`${words[words.length - 1]}, ${words.slice(0, -1).join(" ")}`);
   }
-  if (q && !q.endsWith("*")) add(`${q}*`);
+  if (q && !q.endsWith("*") && words.length <= 2) add(`${q}*`);
   return variants.slice(0, 3);
 }
 
@@ -548,10 +548,9 @@ function scoreNameHit(query, hit) {
   if (` ${label} `.includes(` ${q} `)) return 720 - Math.min(label.length, 80);
   if (label.includes(q)) return 540 - Math.min(label.length, 80);
   const tokens = q.split(/\s+/).filter((token) => token.length > 1);
-  if (!tokens.length) return 0;
-  const hits = tokens.filter((token) => label.includes(token)).length;
-  if (!hits) return 0;
-  return (hits / tokens.length) * 420 - Math.min(label.length, 80);
+  if (!tokens.length || tokens.length === 1) return 0;
+  if (!tokens.every((token) => label.includes(token))) return 0;
+  return 400 + tokens.length * 10 - Math.min(label.length, 80);
 }
 
 async function fetchNameHits(type, field, query) {
