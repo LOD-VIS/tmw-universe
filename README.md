@@ -29,7 +29,7 @@ Verlinkungen, die aus dem Datenpool des Technischen Museums herausführen, führ
 
 Die Navigation erfolgt direkt zu Sternen oder entlang von Verlinkungslinien.
 
-Eine Suche ermöglicht Sterne direkt anzuspringen.
+Eine Suche ermöglicht Sterne direkt anzuspringen — nach ID, URL oder nach Objektname, Personenname und Thesaurusbegriff.
 
 ## Local development
 
@@ -44,9 +44,11 @@ Then open http://localhost:4173/
 Search examples:
 
 - `164392` — Mercedes-Benz W 196 R "Silberpfeil"
+- `Silberpfeil` — Suche nach Objektname
+- `Albumblatt` — Thesaurusbegriff
 - `object/164392`
-- `person/250326` — Stirling Moss
-- `person/251540` — Elisabeth (Österreich, Kaiserin) und verknüpfte Objekte
+- `Stirling Moss` / `person/250326` — Stirling Moss
+- `Elisabeth` / `person/251540` — Elisabeth (Österreich, Kaiserin) und verknüpfte Objekte
 - `https://data.tmw.at/object/creator_lref:251540/xml` — Person 251540 als Urheber
 - `https://data.tmw.at/thesaurus/12992`
 - `https://data.tmw.at/object/object_name_lref:30832/xml` — Thesaurus 30832 (Albumblatt) und verknüpfte Objekte
