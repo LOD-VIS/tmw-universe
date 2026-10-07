@@ -161,6 +161,18 @@ html, body {
   font-size: 0.8rem;
 }
 
+a.panel-id {
+  display: inline-block;
+  color: #93c5fd;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  word-break: break-all;
+}
+
+a.panel-id:hover {
+  color: #e8eefc;
+}
+
 #restart-from-star {
   display: inline-block;
   margin: 0.75rem 0 0.35rem;

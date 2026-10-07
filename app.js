@@ -9,6 +9,7 @@ const COLORS = {
   person: "#7ec8ff",
   thesaurus: "#c084fc",
   external: "#64748b",
+  selected: "#f43f5e",
 };
 
 const LINK_STYLE = {
@@ -720,15 +721,28 @@ async function expandNode(node, { quiet = false } = {}) {
 }
 
 function updatePanel(node) {
+  const idEl = document.getElementById("panel-id");
   if (!node) {
     panel.hidden = true;
     restartBtn.hidden = true;
+    idEl.hidden = true;
+    idEl.removeAttribute("href");
+    idEl.textContent = "";
     return;
   }
   panel.hidden = false;
   document.getElementById("panel-type").textContent = node.internal ? node.type : "anderes Universum";
   document.getElementById("panel-title").textContent = node.label;
-  document.getElementById("panel-id").textContent = node.href;
+  const href = String(node.href || "").trim();
+  if (/^https?:\/\//i.test(href)) {
+    idEl.hidden = false;
+    idEl.href = href;
+    idEl.textContent = href;
+  } else {
+    idEl.hidden = true;
+    idEl.removeAttribute("href");
+    idEl.textContent = "";
+  }
   document.getElementById("panel-description").textContent = node.description
     ? node.description.slice(0, 700)
     : node.internal
@@ -884,15 +898,11 @@ function draw() {
     (a, b) => projected.get(b.key).depth - projected.get(a.key).depth,
   );
   for (const node of ordered) {
-    const p = projected.get(node.key);
-    const color = COLORS[node.type] || COLORS.external;
-    ctx.beginPath();
-    ctx.fillStyle = color;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = node.key === graph.selected ? 28 : 8 + Math.min(18, linkCount(node));
-    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-    ctx.fill();
+    if (node.key === graph.selected) continue;
+    drawStar(node, projected.get(node.key), false);
   }
+  const selected = graph.nodes.get(graph.selected);
+  if (selected) drawStar(selected, projected.get(selected.key), true);
   ctx.shadowBlur = 0;
 
   const labeled = ordered.filter((node) => (
@@ -907,6 +917,17 @@ function draw() {
     drawStarLabel(node, projected.get(node.key));
   }
   requestAnimationFrame(draw);
+}
+
+function drawStar(node, p, selected) {
+  if (!p) return;
+  const color = selected ? COLORS.selected : (COLORS[node.type] || COLORS.external);
+  ctx.beginPath();
+  ctx.fillStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = selected ? 28 : 8 + Math.min(18, linkCount(node));
+  ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function drawStarLabel(node, p) {
