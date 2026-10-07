@@ -892,14 +892,47 @@ function draw() {
     ctx.shadowBlur = node.key === graph.selected ? 28 : 8 + Math.min(18, linkCount(node));
     ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
     ctx.fill();
-    ctx.shadowBlur = 0;
-    if (node.key === graph.selected || node.depth === 0 || node.key === hoverKey) {
-      ctx.fillStyle = "#e8eefc";
-      ctx.font = `${11 * devicePixelRatio}px sans-serif`;
-      ctx.fillText(node.label, p.x + p.size + 6, p.y - 4);
-    }
+  }
+  ctx.shadowBlur = 0;
+
+  const labeled = ordered.filter((node) => (
+    node.key === graph.selected || node.depth === 0 || node.key === hoverKey
+  ));
+  labeled.sort((a, b) => {
+    const aSel = a.key === graph.selected ? 1 : 0;
+    const bSel = b.key === graph.selected ? 1 : 0;
+    return aSel - bSel;
+  });
+  for (const node of labeled) {
+    drawStarLabel(node, projected.get(node.key));
   }
   requestAnimationFrame(draw);
+}
+
+function drawStarLabel(node, p) {
+  if (!p || !node.label) return;
+  const fontSize = 11 * devicePixelRatio;
+  ctx.font = `${fontSize}px sans-serif`;
+  const textW = ctx.measureText(node.label).width;
+  const padX = 5 * devicePixelRatio;
+  const padY = 3.2 * devicePixelRatio;
+  const x = p.x + p.size + 7 * devicePixelRatio;
+  const y = p.y + fontSize * 0.32;
+  const boxX = x - padX;
+  const boxY = y - fontSize + padY * 0.2;
+  const boxW = textW + padX * 2;
+  const boxH = fontSize + padY * 2;
+  const radius = 4 * devicePixelRatio;
+  ctx.fillStyle = "rgba(4, 6, 15, 0.9)";
+  ctx.beginPath();
+  if (typeof ctx.roundRect === "function") {
+    ctx.roundRect(boxX, boxY, boxW, boxH, radius);
+  } else {
+    ctx.rect(boxX, boxY, boxW, boxH);
+  }
+  ctx.fill();
+  ctx.fillStyle = "#e8eefc";
+  ctx.fillText(node.label, x, y);
 }
 
 function hitTest(clientX, clientY) {
