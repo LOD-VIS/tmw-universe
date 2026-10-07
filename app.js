@@ -50,6 +50,9 @@ const panel = document.getElementById("panel");
 const searchForm = document.getElementById("search-form");
 const searchInput = document.getElementById("search");
 const restartBtn = document.getElementById("restart-from-star");
+const fadeToggle = document.getElementById("fade-stars");
+const FADE_STORAGE_KEY = "tmw-universe-fade-stars";
+let fadeStarsEnabled = true;
 
 const graph = {
   nodes: new Map(),
@@ -207,6 +210,7 @@ function touchNode(node, at = performance.now()) {
 }
 
 function refreshActiveStars(at = performance.now()) {
+  if (!fadeStarsEnabled) return;
   const origin = graph.nodes.get(graph.origin);
   touchNode(origin, at);
   touchNode(graph.nodes.get(graph.selected), at);
@@ -225,7 +229,7 @@ function isKeptStar(node) {
 }
 
 function starAlpha(node, at = performance.now()) {
-  if (!node || isKeptStar(node)) return 1;
+  if (!fadeStarsEnabled || !node || isKeptStar(node)) return 1;
   const age = at - (node.freshAt || 0);
   if (age <= STAR_LIFE.fadeAfterMs) return 1;
   return Math.max(0, 1 - (age - STAR_LIFE.fadeAfterMs) / STAR_LIFE.fadeForMs);
@@ -243,6 +247,7 @@ function removeNode(node) {
 }
 
 function pruneFadedStars(at = performance.now()) {
+  if (!fadeStarsEnabled) return;
   for (const node of [...graph.nodes.values()]) {
     if (isKeptStar(node)) continue;
     if (starAlpha(node, at) > 0.02) continue;
@@ -1101,6 +1106,36 @@ restartBtn.addEventListener("click", () => {
   if (!node?.internal) return;
   jumpTo(`${node.type}/${node.id}`);
 });
+
+function readFadePref() {
+  try {
+    const stored = localStorage.getItem(FADE_STORAGE_KEY);
+    if (stored === "0") return false;
+    if (stored === "1") return true;
+  } catch {
+    /* ignore */
+  }
+  return true;
+}
+
+function setFadeStarsEnabled(enabled) {
+  fadeStarsEnabled = Boolean(enabled);
+  fadeToggle.checked = fadeStarsEnabled;
+  try {
+    localStorage.setItem(FADE_STORAGE_KEY, fadeStarsEnabled ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+  if (fadeStarsEnabled) {
+    const now = performance.now();
+    for (const node of graph.nodes.values()) node.freshAt = now;
+  }
+}
+
+fadeToggle.addEventListener("change", () => {
+  setFadeStarsEnabled(fadeToggle.checked);
+});
+setFadeStarsEnabled(readFadePref());
 
 window.addEventListener("resize", resize);
 resize();
