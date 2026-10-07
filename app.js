@@ -892,14 +892,34 @@ function draw() {
     ctx.shadowBlur = node.key === graph.selected ? 28 : 8 + Math.min(18, linkCount(node));
     ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
     ctx.fill();
-    ctx.shadowBlur = 0;
-    if (node.key === graph.selected || node.depth === 0 || node.key === hoverKey) {
-      ctx.fillStyle = "#e8eefc";
-      ctx.font = `${11 * devicePixelRatio}px sans-serif`;
-      ctx.fillText(node.label, p.x + p.size + 6, p.y - 4);
-    }
+  }
+  ctx.shadowBlur = 0;
+
+  const labeled = ordered.filter((node) => (
+    node.key === graph.selected || node.depth === 0 || node.key === hoverKey
+  ));
+  labeled.sort((a, b) => {
+    const aSel = a.key === graph.selected ? 1 : 0;
+    const bSel = b.key === graph.selected ? 1 : 0;
+    return aSel - bSel;
+  });
+  for (const node of labeled) {
+    drawStarLabel(node, projected.get(node.key));
   }
   requestAnimationFrame(draw);
+}
+
+function drawStarLabel(node, p) {
+  if (!p || !node.label) return;
+  const x = p.x + p.size + 6 * devicePixelRatio;
+  const y = p.y - 4 * devicePixelRatio;
+  ctx.font = `${11 * devicePixelRatio}px sans-serif`;
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 3.2 * devicePixelRatio;
+  ctx.strokeStyle = "rgba(4, 6, 15, 0.88)";
+  ctx.strokeText(node.label, x, y);
+  ctx.fillStyle = "#e8eefc";
+  ctx.fillText(node.label, x, y);
 }
 
 function hitTest(clientX, clientY) {
