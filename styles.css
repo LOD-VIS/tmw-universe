@@ -83,6 +83,60 @@ html, body {
   cursor: pointer;
 }
 
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.switch-ui {
+  position: relative;
+  width: 2.1rem;
+  height: 1.15rem;
+  border-radius: 999px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.switch-ui::after {
+  content: "";
+  position: absolute;
+  top: 0.12rem;
+  left: 0.12rem;
+  width: 0.82rem;
+  height: 0.82rem;
+  border-radius: 50%;
+  background: #cbd5e1;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.switch input:checked + .switch-ui {
+  background: #be123c;
+  border-color: #fb7185;
+}
+
+.switch input:checked + .switch-ui::after {
+  transform: translateX(0.9rem);
+  background: #fff;
+}
+
+.switch input:focus-visible + .switch-ui {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
+
 .legend {
   display: flex;
   gap: 0.9rem;
