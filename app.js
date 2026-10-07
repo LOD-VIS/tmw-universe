@@ -911,13 +911,26 @@ function draw() {
 
 function drawStarLabel(node, p) {
   if (!p || !node.label) return;
-  const x = p.x + p.size + 6 * devicePixelRatio;
-  const y = p.y - 4 * devicePixelRatio;
-  ctx.font = `${11 * devicePixelRatio}px sans-serif`;
-  ctx.lineJoin = "round";
-  ctx.lineWidth = 3.2 * devicePixelRatio;
-  ctx.strokeStyle = "rgba(4, 6, 15, 0.88)";
-  ctx.strokeText(node.label, x, y);
+  const fontSize = 11 * devicePixelRatio;
+  ctx.font = `${fontSize}px sans-serif`;
+  const textW = ctx.measureText(node.label).width;
+  const padX = 5 * devicePixelRatio;
+  const padY = 3.2 * devicePixelRatio;
+  const x = p.x + p.size + 7 * devicePixelRatio;
+  const y = p.y + fontSize * 0.32;
+  const boxX = x - padX;
+  const boxY = y - fontSize + padY * 0.2;
+  const boxW = textW + padX * 2;
+  const boxH = fontSize + padY * 2;
+  const radius = 4 * devicePixelRatio;
+  ctx.fillStyle = "rgba(4, 6, 15, 0.9)";
+  ctx.beginPath();
+  if (typeof ctx.roundRect === "function") {
+    ctx.roundRect(boxX, boxY, boxW, boxH, radius);
+  } else {
+    ctx.rect(boxX, boxY, boxW, boxH);
+  }
+  ctx.fill();
   ctx.fillStyle = "#e8eefc";
   ctx.fillText(node.label, x, y);
 }
