@@ -12,6 +12,11 @@ const COLORS = {
   selected: "#f43f5e",
 };
 
+const STAR_LIFE = {
+  fadeAfterMs: 8000,
+  fadeForMs: 6000,
+};
+
 const LINK_STYLE = {
   narrower: { stroke: "rgba(52, 211, 153, 0.72)", width: 1.7 },
   broader: { stroke: "rgba(251, 146, 60, 0.72)", width: 1.7 },
@@ -191,9 +196,58 @@ function ensureNode(ref, label, depth) {
     z: 0,
     placed: false,
     displayDepth: depth,
+    freshAt: performance.now(),
   };
   graph.nodes.set(key, node);
   return node;
+}
+
+function touchNode(node, at = performance.now()) {
+  if (node) node.freshAt = at;
+}
+
+function refreshActiveStars(at = performance.now()) {
+  const origin = graph.nodes.get(graph.origin);
+  touchNode(origin, at);
+  touchNode(graph.nodes.get(graph.selected), at);
+  touchNode(graph.nodes.get(hoverKey), at);
+  if (!origin) return;
+  for (const key of origin.neighbors) {
+    touchNode(graph.nodes.get(key), at);
+  }
+}
+
+function isKeptStar(node) {
+  if (!node) return false;
+  if (node.key === graph.selected || node.key === graph.origin || node.key === hoverKey) return true;
+  const origin = graph.nodes.get(graph.origin);
+  return Boolean(origin?.neighbors.includes(node.key));
+}
+
+function starAlpha(node, at = performance.now()) {
+  if (!node || isKeptStar(node)) return 1;
+  const age = at - (node.freshAt || 0);
+  if (age <= STAR_LIFE.fadeAfterMs) return 1;
+  return Math.max(0, 1 - (age - STAR_LIFE.fadeAfterMs) / STAR_LIFE.fadeForMs);
+}
+
+function removeNode(node) {
+  if (!node || node.key === graph.selected || node.key === graph.origin) return;
+  for (const key of node.neighbors) {
+    const other = graph.nodes.get(key);
+    if (other) other.neighbors = other.neighbors.filter((neighbor) => neighbor !== node.key);
+    graph.edges.delete(edgeKey(node.key, key));
+  }
+  graph.nodes.delete(node.key);
+  if (hoverKey === node.key) hoverKey = null;
+}
+
+function pruneFadedStars(at = performance.now()) {
+  for (const node of [...graph.nodes.values()]) {
+    if (isKeptStar(node)) continue;
+    if (starAlpha(node, at) > 0.02) continue;
+    removeNode(node);
+  }
 }
 
 function edgeKey(a, b) {
@@ -866,6 +920,8 @@ function drawFlight(projected) {
 function draw() {
   const now = performance.now();
   updateFlight(now);
+  refreshActiveStars(now);
+  pruneFadedStars(now);
   drawBackground();
   const projected = new Map();
   for (const node of graph.nodes.values()) {
@@ -883,12 +939,17 @@ function draw() {
         ? "external"
         : linkTypeOf(node.key, neighborKey);
       const style = LINK_STYLE[linkType] || LINK_STYLE.link;
+      const alpha = Math.min(starAlpha(node, now), starAlpha(toNode, now));
+      if (alpha <= 0) continue;
+      ctx.save();
+      ctx.globalAlpha = alpha;
       ctx.strokeStyle = style.stroke;
       ctx.lineWidth = style.width * devicePixelRatio;
       ctx.beginPath();
       ctx.moveTo(from.x, from.y);
       ctx.lineTo(to.x, to.y);
       ctx.stroke();
+      ctx.restore();
     }
   }
 
@@ -899,10 +960,10 @@ function draw() {
   );
   for (const node of ordered) {
     if (node.key === graph.selected) continue;
-    drawStar(node, projected.get(node.key), false);
+    drawStar(node, projected.get(node.key), false, starAlpha(node, now));
   }
   const selected = graph.nodes.get(graph.selected);
-  if (selected) drawStar(selected, projected.get(selected.key), true);
+  if (selected) drawStar(selected, projected.get(selected.key), true, 1);
   ctx.shadowBlur = 0;
 
   const labeled = ordered.filter((node) => (
@@ -914,24 +975,29 @@ function draw() {
     return aSel - bSel;
   });
   for (const node of labeled) {
-    drawStarLabel(node, projected.get(node.key));
+    drawStarLabel(node, projected.get(node.key), starAlpha(node, now));
   }
   requestAnimationFrame(draw);
 }
 
-function drawStar(node, p, selected) {
-  if (!p) return;
+function drawStar(node, p, selected, alpha = 1) {
+  if (!p || alpha <= 0) return;
   const color = selected ? COLORS.selected : (COLORS[node.type] || COLORS.external);
+  ctx.save();
+  ctx.globalAlpha = alpha;
   ctx.beginPath();
   ctx.fillStyle = color;
   ctx.shadowColor = color;
   ctx.shadowBlur = selected ? 28 : 8 + Math.min(18, linkCount(node));
-  ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+  ctx.arc(p.x, p.y, p.size * (0.62 + 0.38 * alpha), 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
 }
 
-function drawStarLabel(node, p) {
-  if (!p || !node.label) return;
+function drawStarLabel(node, p, alpha = 1) {
+  if (!p || !node.label || alpha <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
   const fontSize = 11 * devicePixelRatio;
   ctx.font = `${fontSize}px sans-serif`;
   const textW = ctx.measureText(node.label).width;
@@ -954,6 +1020,7 @@ function drawStarLabel(node, p) {
   ctx.fill();
   ctx.fillStyle = "#e8eefc";
   ctx.fillText(node.label, x, y);
+  ctx.restore();
 }
 
 function hitTest(clientX, clientY) {
@@ -962,6 +1029,7 @@ function hitTest(clientX, clientY) {
   let best = null;
   let bestDist = 18 * devicePixelRatio;
   for (const node of graph.nodes.values()) {
+    if (starAlpha(node) < 0.2) continue;
     const p = project(node);
     const dist = Math.hypot(p.x - x, p.y - y);
     if (dist < Math.max(bestDist, p.size + 8)) {
