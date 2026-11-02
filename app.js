@@ -2,6 +2,23 @@ const API_BASE = "https://data.tmw.at";
 const TMW_HOST = "data.tmw.at";
 const START_ID = "164392";
 
+function apiUrl(path) {
+  const rel = path.startsWith("/") ? path : `/${path}`;
+  let base = API_BASE;
+  try {
+    const params = new URLSearchParams(location.search);
+    const override = params.get("api");
+    if (override) {
+      base = override.replace(/\/+$/, "");
+    } else if (location.hostname === "localhost" || location.hostname === "127.0.0.1") {
+      base = `${location.protocol}//${location.host}/tmw`;
+    }
+  } catch {
+    /* keep API_BASE */
+  }
+  return `${base}${rel}`;
+}
+
 const RDF_NS = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 
 const COLORS = {
@@ -132,6 +149,8 @@ function hash01(key, salt) {
   return h / 4294967296;
 }
 
+const RECORD_FORMATS = new Set(["xml", "json", "lido", "turtle", "cidoc", "html", "skos", "rdf", "jsonld", "n3"]);
+
 function parseTmwRef(value) {
   if (!value) return null;
   const raw = String(value).trim();
@@ -154,12 +173,21 @@ function parseTmwRef(value) {
 
   try {
     const url = new URL(raw, `${API_BASE}/`);
-    if (url.hostname && url.hostname !== TMW_HOST && url.hostname !== "localhost") {
+    const host = (url.hostname || "").replace(/^www\./, "");
+    if (url.hostname && host !== TMW_HOST && host !== "localhost") {
       return { type: "external", id: raw, label: raw, internal: false, href: raw };
     }
-    const parts = url.pathname.replace(/^\/+|\/+$/g, "").split("/");
-    if (parts.length >= 2 && ["object", "person", "thesaurus"].includes(parts[0])) {
-      return { type: parts[0], id: parts[1], internal: true };
+    const parts = url.pathname
+      .replace(/^\/+|\/+$/g, "")
+      .split("/")
+      .filter((part) => part && !RECORD_FORMATS.has(part.toLowerCase()));
+    while (parts.length >= 3 && parts[1].toLowerCase() === parts[0].toLowerCase()) {
+      parts.splice(1, 1);
+    }
+    if (parts.length >= 2 && ["object", "person", "thesaurus"].includes(parts[0].toLowerCase())) {
+      const type = parts[0].toLowerCase();
+      const idPart = parts.slice(1).find((part) => /^\d+$/.test(part));
+      if (idPart) return { type, id: idPart, internal: true };
     }
   } catch {
     return { type: "external", id: raw, label: raw, internal: false, href: raw };
@@ -279,36 +307,71 @@ function linkNodes(from, to, linkType = "link") {
 }
 
 function localName(el) {
-  return (el.localName || el.nodeName.split(":").pop() || "").toLowerCase();
+  const raw = el?.localName || el?.nodeName || "";
+  return String(raw).split(":").pop().toLowerCase();
+}
+
+function walkElements(root) {
+  const out = [];
+  const visit = (node) => {
+    for (const child of node.children || []) {
+      out.push(child);
+      visit(child);
+    }
+  };
+  if (root) visit(root);
+  return out;
 }
 
 function elementsByLocalName(root, name) {
   const wanted = name.toLowerCase();
-  return [...root.getElementsByTagName("*")].filter((el) => localName(el) === wanted);
+  const nodes = root?.getElementsByTagName?.("*");
+  const list = nodes && nodes.length ? [...nodes] : walkElements(root);
+  return list.filter((el) => localName(el) === wanted);
 }
 
 function rdfAttr(el, name) {
+  if (!el) return "";
   return (
     el.getAttributeNS?.(RDF_NS, name)
-    || el.getAttribute(`rdf:${name}`)
-    || el.getAttribute(name)
+    || el.getAttribute?.(`rdf:${name}`)
+    || el.getAttribute?.(name)
     || ""
   );
 }
 
+function ownText(el) {
+  if (!el) return "";
+  const parts = [];
+  for (const node of el.childNodes) {
+    if (node.nodeType === 3) parts.push(node.textContent);
+  }
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
+
 function childText(el, names) {
+  if (!el) return "";
   const wanted = names.map((n) => n.toLowerCase());
-  for (const child of el.getElementsByTagName("*")) {
+  for (const child of walkElements(el)) {
     if (wanted.includes(localName(child))) {
-      const parts = [];
-      for (const node of child.childNodes) {
-        if (node.nodeType === 3) parts.push(node.textContent);
-      }
-      const text = parts.join(" ").replace(/\s+/g, " ").trim();
+      const text = ownText(child);
       if (text) return text;
     }
   }
   return "";
+}
+
+function looksLikeXml(text) {
+  const trimmed = String(text || "").trim();
+  return trimmed.startsWith("<") && !/^<!doctype html/i.test(trimmed) && !/^<html[\s>]/i.test(trimmed);
+}
+
+function parseXml(text) {
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  if (elementsByLocalName(doc, "parsererror").length) {
+    throw new Error("Ungültige XML-Antwort");
+  }
+  return doc;
 }
 
 function extractLabel(record, fallback) {
@@ -316,72 +379,52 @@ function extractLabel(record, fallback) {
   return title || record.name || record.prefLabel || record.term || fallback;
 }
 
-function collectRefs(record) {
-  const refs = [];
-  const buckets = [
-    [record.creator?.text, "creator"],
-    [record.collection?.text, "collection"],
-    [record.object_name?.text, "object_name"],
-    [record.subject?.text, "subject"],
-    [record.related_object?.text, "related_object"],
-  ];
-  for (const [bucket, linkType] of buckets) {
-    for (const item of asList(bucket)) {
-      const resource = item?.["@attributes"]?.resource || item?.resource;
-      const parsed = parseTmwRef(resource);
-      if (parsed) {
-        refs.push({
-          ...parsed,
-          label: item.string || item.title || parsed.id,
-          linkType: parsed.internal === false ? "external" : linkType,
-        });
-      }
-    }
-  }
-  for (const item of asList(record.link?.text)) {
-    const href = item.uri || item["@attributes"]?.resource;
-    const parsed = parseTmwRef(href);
-    if (parsed) {
-      refs.push({
-        ...parsed,
-        label: item["@attributes"]?.type || parsed.id,
-        linkType: parsed.internal === false ? "external" : "link",
-      });
-    }
-  }
-  return refs;
-}
-
 function addSkosRef(refs, seen, value, label, linkType) {
   const parsed = parseTmwRef(value);
   if (!parsed) return;
-  const key = `${parsed.type}:${parsed.id}:${linkType}`;
+  const type = parsed.internal === false ? "external" : (linkType || "link");
+  const key = `${parsed.type}:${parsed.id}:${type}`;
   if (seen.has(key)) return;
   seen.add(key);
   refs.push({
     ...parsed,
-    label: label || parsed.id,
-    linkType,
+    label: label || parsed.label || parsed.id,
+    linkType: type,
   });
 }
 
 function parseSkos(xmlText, fallbackId) {
-  const doc = new DOMParser().parseFromString(xmlText, "application/xml");
-  const pref = childText(doc, ["prefLabel"]) || `thesaurus ${fallbackId}`;
-  const description = childText(doc, ["scopeNote", "scopenote"]);
+  const doc = parseXml(xmlText);
+  const concepts = elementsByLocalName(doc, "concept");
+  const main = concepts.find((concept) => {
+    const parsed = parseTmwRef(rdfAttr(concept, "about"));
+    return parsed?.type === "thesaurus" && parsed.id === String(fallbackId);
+  }) || concepts[0] || doc;
+  const pref = childText(main, ["prefLabel"]) || `thesaurus ${fallbackId}`;
+  const note = childText(main, ["scopeNote", "scopenote", "note"]);
+  const description = note && !/^status\s*:/i.test(note) ? note : "";
+  const labels = new Map();
+  for (const concept of concepts) {
+    const about = rdfAttr(concept, "about");
+    const label = childText(concept, ["prefLabel", "label"]);
+    if (about && label) labels.set(about, label);
+  }
   const refs = [];
   const seen = new Set();
-  for (const rel of ["broader", "narrower", "related"]) {
-    for (const el of elementsByLocalName(doc, rel)) {
-      addSkosRef(refs, seen, rdfAttr(el, "resource"), "", rel);
+  for (const rel of ["broader", "narrower", "related", "exactmatch"]) {
+    const linkType = rel === "exactmatch" ? "external" : rel;
+    for (const el of elementsByLocalName(main, rel)) {
+      const resource = rdfAttr(el, "resource");
+      addSkosRef(refs, seen, resource, labels.get(resource) || "", linkType);
       for (const child of el.children || []) {
         if (localName(child) !== "concept") continue;
+        const about = rdfAttr(child, "about") || rdfAttr(child, "resource");
         addSkosRef(
           refs,
           seen,
-          rdfAttr(child, "about") || rdfAttr(child, "resource"),
-          childText(child, ["label", "prefLabel"]),
-          rel,
+          about,
+          childText(child, ["label", "prefLabel"]) || labels.get(about) || "",
+          linkType,
         );
       }
     }
@@ -389,80 +432,100 @@ function parseSkos(xmlText, fallbackId) {
   return { label: pref, description, refs };
 }
 
-const MAX_LINKED_OBJECTS = 40;
-
-function collectObjectSearchRefs(data) {
-  const records = asList(data?.recordList?.record);
-  const total = Number(data?.status?.count?.num) || records.length;
+function parseLido(xmlText, fallbackId) {
+  const doc = parseXml(xmlText);
+  const titleWrap = elementsByLocalName(doc, "titleWrap")[0];
+  const label = (titleWrap && childText(titleWrap, ["appellationValue"]))
+    || childText(doc, ["appellationValue"])
+    || `object ${fallbackId}`;
+  const description = childText(doc, ["descriptiveNoteValue"]);
   const refs = [];
-  for (const record of records) {
-    const objectId = record?.id;
-    if (!objectId) continue;
+  const seen = new Set();
+
+  const add = (value, name, linkType) => {
+    addSkosRef(refs, seen, value, name, linkType);
+  };
+
+  for (const el of elementsByLocalName(doc, "objectWorkType")) {
+    add(childText(el, ["conceptID"]), childText(el, ["term"]), "object_name");
+  }
+  for (const el of elementsByLocalName(doc, "classification")) {
+    add(childText(el, ["conceptID"]), childText(el, ["term"]), "subject");
+  }
+  for (const el of elementsByLocalName(doc, "actorInRole")) {
+    const actor = elementsByLocalName(el, "actor")[0] || el;
+    const rawName = childText(actor, ["nameActorSet"]) || ownText(actor);
+    add(childText(actor, ["actorID"]), rawName.split(";")[0].trim() || rawName, "creator");
+  }
+  for (const el of elementsByLocalName(doc, "place")) {
+    add(childText(el, ["placeID"]), childText(el, ["namePlaceSet"]) || childText(el, ["appellationValue"]), "subject");
+  }
+  for (const el of elementsByLocalName(doc, "repositorySet")) {
+    add(childText(el, ["actorID"]), childText(el, ["nameActorSet"]) || childText(el, ["appellationValue"]), "collection");
+  }
+  for (const el of elementsByLocalName(doc, "relatedWork")) {
+    add(childText(el, ["objectID"]), childText(el, ["displayObject"]), "related_object");
+  }
+  for (const el of elementsByLocalName(doc, "subjectConcept")) {
+    add(childText(el, ["conceptID"]), childText(el, ["term"]), "subject");
+  }
+  return { label, description, refs };
+}
+
+function parsePersonRdf(xmlText, fallbackId) {
+  const doc = parseXml(xmlText);
+  const person = elementsByLocalName(doc, "person")[0] || doc;
+  const label = childText(person, ["name"]) || `person ${fallbackId}`;
+  const description = [
+    childText(person, ["description"]),
+    childText(person, ["jobTitle"]),
+  ].filter(Boolean).join(" ");
+  const refs = [];
+  const seen = new Set();
+  for (const el of elementsByLocalName(person, "sameAs")) {
+    addSkosRef(refs, seen, rdfAttr(el, "resource") || ownText(el), "", "external");
+  }
+  return { label, description, refs };
+}
+
+function collectLidoSearchRefs(xmlText) {
+  const doc = parseXml(xmlText);
+  const records = elementsByLocalName(doc, "lido").filter((el) => localName(el.parentElement || el) !== "lido");
+  const wrapped = records.length ? records : elementsByLocalName(doc, "lido");
+  const refs = [];
+  const seen = new Set();
+  for (const record of wrapped) {
+    if (localName(record) !== "lido") continue;
+    const recId = childText(record, ["recordID"]);
+    const parsed = parseTmwRef(childText(record, ["lidoRecID"]) || recId);
+    const id = parsed?.type === "object" ? parsed.id : (/^\d+$/.test(recId) ? recId : null);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const titleWrap = elementsByLocalName(record, "titleWrap")[0];
     refs.push({
       type: "object",
-      id: String(objectId),
+      id: String(id),
       internal: true,
-      label: extractLabel(record, `object ${objectId}`),
+      label: (titleWrap && childText(titleWrap, ["appellationValue"])) || `object ${id}`,
     });
   }
-  return { refs, total };
+  return { refs, total: refs.length };
 }
 
-async function fetchObjectFieldSearch(id, field, linkType) {
-  const response = await fetch(
-    `${API_BASE}/object/${field}:${id}|limit=${MAX_LINKED_OBJECTS}/json`,
-  );
-  if (!response.ok) return { refs: [], total: 0 };
-  const result = collectObjectSearchRefs(await response.json());
-  for (const ref of result.refs) ref.linkType = linkType;
-  return result;
-}
-
-function mergeObjectSearches(...results) {
-  const byId = new Map();
-  let total = 0;
-  for (const result of results) {
-    total += result.total || 0;
-    for (const ref of result.refs) {
-      const existing = byId.get(ref.id);
-      if (!existing) {
-        byId.set(ref.id, { ...ref, extraLinkTypes: [] });
-        continue;
-      }
-      if (ref.linkType && ref.linkType !== existing.linkType) {
-        existing.extraLinkTypes.push(ref.linkType);
-      }
+async function fetchFirstOk(urls) {
+  for (const url of urls) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) continue;
+      const text = await response.text();
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("html") && !looksLikeXml(text)) continue;
+      return { text, contentType };
+    } catch {
+      /* try next format */
     }
   }
-  return {
-    refs: [...byId.values()].slice(0, MAX_LINKED_OBJECTS),
-    total,
-  };
-}
-
-async function fetchThesaurusObjects(id) {
-  const searches = await Promise.all([
-    fetchObjectFieldSearch(id, "object_name_lref", "object_name"),
-    fetchObjectFieldSearch(id, "subject_lref", "subject"),
-  ]);
-  return mergeObjectSearches(...searches);
-}
-
-async function fetchPersonObjects(id) {
-  const search = await fetchObjectFieldSearch(id, "creator_lref", "creator");
-  return {
-    refs: search.refs.slice(0, MAX_LINKED_OBJECTS),
-    total: search.total,
-  };
-}
-
-function linkedObjectSummary(shown, total, kind) {
-  if (!shown) return "";
-  const label = shown === 1 ? kind.replace(/^Objekte /, "Objekt ") : kind;
-  if (total > shown) {
-    return `${shown} ${label} (von ${total}).`;
-  }
-  return `${shown} ${label}.`;
+  return null;
 }
 
 function placeAtOrigin(node) {
@@ -518,56 +581,37 @@ async function expandOneHop(origin) {
   }));
 }
 
+async function fetchXmlRecord(url, missingMessage) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(missingMessage);
+  const text = await response.text();
+  if (!looksLikeXml(text)) throw new Error(missingMessage);
+  return text;
+}
+
 async function fetchRecord(type, id) {
   if (type === "thesaurus") {
-    const response = await fetch(`${API_BASE}/thesaurus/${id}/skos`);
-    if (!response.ok) throw new Error(`Thesaurus ${id} nicht gefunden`);
-    const parsed = parseSkos(await response.text(), id);
-    let objects = { refs: [], total: 0 };
-    try {
-      objects = await fetchThesaurusObjects(id);
-    } catch {
-      objects = { refs: [], total: 0 };
-    }
-    return {
-      ...parsed,
-      description: [parsed.description, linkedObjectSummary(objects.refs.length, objects.total, "Objekte mit diesem Begriff")]
-        .filter(Boolean)
-        .join(" "),
-      refs: [...parsed.refs, ...objects.refs],
-    };
+    return parseSkos(
+      await fetchXmlRecord(apiUrl(`/thesaurus/${id}/xml`), `Thesaurus ${id} nicht gefunden`),
+      id,
+    );
   }
 
-  const response = await fetch(`${API_BASE}/${type}/${id}/json`);
-  if (!response.ok) throw new Error(`${type} ${id} nicht gefunden`);
-  const data = await response.json();
-  const record = data?.recordList?.record;
-  if (!record) throw new Error(`${type} ${id} nicht gefunden`);
-  const label = extractLabel(record, `${type} ${id}`);
-  const refs = collectRefs(record);
-  if (type !== "person") {
-    return {
-      label,
-      description: record.description || record.biography || "",
-      refs,
-      record,
-    };
+  if (type === "object") {
+    return parseLido(
+      await fetchXmlRecord(apiUrl(`/object/${id}/lido`), `object ${id} nicht gefunden`),
+      id,
+    );
   }
 
-  let objects = { refs: [], total: 0 };
-  try {
-    objects = await fetchPersonObjects(id);
-  } catch {
-    objects = { refs: [], total: 0 };
+  if (type === "person") {
+    return parsePersonRdf(
+      await fetchXmlRecord(apiUrl(`/person/${id}/xml`), `person ${id} nicht gefunden`),
+      id,
+    );
   }
-  return {
-    label,
-    description: [record.description || record.biography || "", linkedObjectSummary(objects.refs.length, objects.total, "Objekte dieser Person")]
-      .filter(Boolean)
-      .join(" "),
-    refs: [...refs, ...objects.refs],
-    record,
-  };
+
+  throw new Error(`${type} ${id} nicht gefunden`);
 }
 
 function encodeSearchValue(value) {
@@ -613,24 +657,73 @@ function scoreNameHit(query, hit) {
   return 400 + tokens.length * 10 - Math.min(label.length, 80);
 }
 
-async function fetchNameHits(type, field, query) {
-  const response = await fetch(
-    `${API_BASE}/${type}/${field}:${encodeSearchValue(query)}|limit=20/json`,
-  );
-  if (!response.ok) return [];
-  const data = await response.json();
+function collectJsonLdHits(data, type) {
+  const nodes = asList(data?.["@graph"] || data);
   const hits = [];
-  for (const record of asList(data?.recordList?.record)) {
-    const id = record?.id;
-    if (!id) continue;
+  for (const node of nodes) {
+    const parsed = parseTmwRef(node?.["@id"] || node?.url || node?.id);
+    if (!parsed?.internal || parsed.type !== type) continue;
+    const label = node.name || node.prefLabel || node.title || node["skos:prefLabel"] || `${type} ${parsed.id}`;
     hits.push({
       type,
-      id: String(id),
+      id: parsed.id,
       internal: true,
-      label: extractLabel(record, `${type} ${id}`),
+      label: typeof label === "object" ? (label["@value"] || label.string || parsed.id) : String(label),
     });
   }
   return hits;
+}
+
+async function fetchNameHits(type, field, query) {
+  const encoded = encodeSearchValue(query);
+  const format = type === "object" ? "lido" : (type === "person" ? "xml" : "xml");
+  const payload = await fetchFirstOk([
+    apiUrl(`/${type}/${field}:${encoded}|limit=20/${format}`),
+    apiUrl(`/${type}/${field}:${encoded}|limit=20/json`),
+  ]);
+  if (!payload) return [];
+  try {
+    if (looksLikeXml(payload.text) && /lido/i.test(payload.text)) {
+      return collectLidoSearchRefs(payload.text).refs.map((ref) => ({ ...ref, type: "object" }));
+    }
+    if (looksLikeXml(payload.text)) {
+      const doc = parseXml(payload.text);
+      const hits = [];
+      const seen = new Set();
+      const tags = type === "person" ? ["person"] : ["concept"];
+      for (const el of elementsByLocalName(doc, tags[0])) {
+        const parsed = parseTmwRef(rdfAttr(el, "about") || rdfAttr(el, "resource"));
+        if (!parsed?.internal || parsed.type !== type || seen.has(parsed.id)) continue;
+        seen.add(parsed.id);
+        hits.push({
+          type,
+          id: parsed.id,
+          internal: true,
+          label: childText(el, ["name", "prefLabel", "label"]) || `${type} ${parsed.id}`,
+        });
+      }
+      return hits;
+    }
+    if (payload.contentType.includes("json") || payload.text.trim().startsWith("{")) {
+      const data = JSON.parse(payload.text);
+      const hits = [];
+      for (const record of asList(data?.recordList?.record)) {
+        const id = record?.id;
+        if (!id) continue;
+        hits.push({
+          type,
+          id: String(id),
+          internal: true,
+          label: extractLabel(record, `${type} ${id}`),
+        });
+      }
+      if (hits.length) return hits;
+      return collectJsonLdHits(data, type);
+    }
+  } catch {
+    return [];
+  }
+  return [];
 }
 
 async function resolveNameQuery(query) {
@@ -805,7 +898,7 @@ function updatePanel(node) {
   document.getElementById("panel-description").textContent = node.description
     ? node.description.slice(0, 700)
     : node.internal
-      ? "Klicken, um diesen Stern zu laden."
+      ? (node.loaded ? "" : "Klicken, um diesen Stern zu laden.")
       : "Diese Verlinkung führt aus dem TMW-Datenpool hinaus und wird nicht verfolgt.";
   restartBtn.hidden = !node.internal;
 }
