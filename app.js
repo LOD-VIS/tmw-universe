@@ -1,22 +1,32 @@
 const API_BASE = "https://data.tmw.at";
 const TMW_HOST = "data.tmw.at";
 const START_ID = "164392";
+const CORS_PROXIES = [
+  (url) => `https://cors.tools/${url}`,
+  (url) => `https://proxy.cors.dev/${url}`,
+];
 
-function apiUrl(path) {
+let localProxyOk = null;
+
+function apiTargets(path) {
   const rel = path.startsWith("/") ? path : `/${path}`;
-  let base = API_BASE;
+  const direct = `${API_BASE}${rel}`;
+  const urls = [];
   try {
     const params = new URLSearchParams(location.search);
     const override = params.get("api");
-    if (override) {
-      base = override.replace(/\/+$/, "");
-    } else if (location.hostname === "localhost" || location.hostname === "127.0.0.1") {
-      base = `${location.protocol}//${location.host}/tmw`;
+    if (override) urls.push(`${override.replace(/\/+$/, "")}${rel}`);
+    const host = location.hostname;
+    if (localProxyOk !== false && (host === "localhost" || host === "127.0.0.1")) {
+      urls.push(`${location.protocol}//${location.host}/tmw${rel}`);
     }
   } catch {
-    /* keep API_BASE */
+    /* ignore */
   }
-  return `${base}${rel}`;
+  // data.tmw.at does not send Access-Control-Allow-Origin, so skip a direct
+  // fetch (it only produces a CORS error in the console) and use proxies.
+  for (const proxy of CORS_PROXIES) urls.push(proxy(direct));
+  return [...new Set(urls)];
 }
 
 const RDF_NS = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
@@ -512,18 +522,35 @@ function collectLidoSearchRefs(xmlText) {
   return { refs, total: refs.length };
 }
 
-async function fetchFirstOk(urls) {
-  for (const url of urls) {
+async function tmwFetch(path) {
+  for (const url of apiTargets(path)) {
+    const localProxy = url.includes("/tmw/");
     try {
       const response = await fetch(url);
-      if (!response.ok) continue;
+      if (!response.ok) {
+        if (localProxy) localProxyOk = false;
+        continue;
+      }
       const text = await response.text();
       const contentType = response.headers.get("content-type") || "";
-      if (contentType.includes("html") && !looksLikeXml(text)) continue;
+      if (contentType.includes("html") && !looksLikeXml(text)) {
+        if (localProxy) localProxyOk = false;
+        continue;
+      }
+      if (!String(text || "").trim()) continue;
+      if (localProxy) localProxyOk = true;
       return { text, contentType };
     } catch {
-      /* try next format */
+      if (localProxy) localProxyOk = false;
     }
+  }
+  return null;
+}
+
+async function fetchFirstOk(paths) {
+  for (const path of paths) {
+    const payload = await tmwFetch(path);
+    if (payload) return payload;
   }
   return null;
 }
@@ -581,32 +608,30 @@ async function expandOneHop(origin) {
   }));
 }
 
-async function fetchXmlRecord(url, missingMessage) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(missingMessage);
-  const text = await response.text();
-  if (!looksLikeXml(text)) throw new Error(missingMessage);
-  return text;
+async function fetchXmlRecord(path, missingMessage) {
+  const payload = await tmwFetch(path);
+  if (!payload || !looksLikeXml(payload.text)) throw new Error(missingMessage);
+  return payload.text;
 }
 
 async function fetchRecord(type, id) {
   if (type === "thesaurus") {
     return parseSkos(
-      await fetchXmlRecord(apiUrl(`/thesaurus/${id}/xml`), `Thesaurus ${id} nicht gefunden`),
+      await fetchXmlRecord(`/thesaurus/${id}/xml`, `Thesaurus ${id} nicht gefunden`),
       id,
     );
   }
 
   if (type === "object") {
     return parseLido(
-      await fetchXmlRecord(apiUrl(`/object/${id}/lido`), `object ${id} nicht gefunden`),
+      await fetchXmlRecord(`/object/${id}/lido`, `object ${id} nicht gefunden`),
       id,
     );
   }
 
   if (type === "person") {
     return parsePersonRdf(
-      await fetchXmlRecord(apiUrl(`/person/${id}/xml`), `person ${id} nicht gefunden`),
+      await fetchXmlRecord(`/person/${id}/xml`, `person ${id} nicht gefunden`),
       id,
     );
   }
@@ -678,8 +703,8 @@ async function fetchNameHits(type, field, query) {
   const encoded = encodeSearchValue(query);
   const format = type === "object" ? "lido" : (type === "person" ? "xml" : "xml");
   const payload = await fetchFirstOk([
-    apiUrl(`/${type}/${field}:${encoded}|limit=20/${format}`),
-    apiUrl(`/${type}/${field}:${encoded}|limit=20/json`),
+    `/${type}/${field}:${encoded}|limit=20/${format}`,
+    `/${type}/${field}:${encoded}|limit=20/json`,
   ]);
   if (!payload) return [];
   try {

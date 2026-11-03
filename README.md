@@ -30,7 +30,7 @@ Eine Suche ermöglicht Sterne direkt anzuspringen — nach ID, URL oder nach Obj
 
 ## Local development
 
-The visualization is a static web client. Record fetches go to data.tmw.at (`/object/{id}/lido`, `/thesaurus/{id}/xml`, `/person/{id}/xml`). Locally, `serve.py` proxies those URLs through `/tmw` because the API currently does not send CORS headers.
+The visualization is a static web client. Record fetches go to data.tmw.at (`/object/{id}/lido`, `/thesaurus/{id}/xml`, `/person/{id}/xml`). Those endpoints do not send `Access-Control-Allow-Origin`, so the browser cannot read them directly. The client therefore loads records through a CORS proxy (`cors.tools`, then `proxy.cors.dev`). Locally, `serve.py` still proxies the same URLs through `/tmw` first.
 
 ```bash
 python3 serve.py 4173
